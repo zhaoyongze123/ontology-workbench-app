@@ -11,6 +11,10 @@ class Packaging(unittest.TestCase):
         origin='https://example.invalid'
         return {'serviceOrigin':origin,'pageUrl':origin+'/oidc/login','embedUrl':origin+'/oidc/embed','authorizationEndpoint':origin+'/oidc/app/authorize','tokenEndpoint':origin+'/oidc/app/token','userInfoEndpoint':origin+'/oidc/app/userinfo','redirectUri':'https://app.workbench.aos.work/basilcraw/api/apps/oauth2/callback','appEntryPath':'/ontology','clientId':'fixture-app-client','clientSecret':'offline-secret-fixture','clientAuthMethod':'body'}
 
+    def minimal_config(self,origin='https://new.example.invalid'):
+        # 新格式只维护服务域名；Workbench 固定 callback 和客户端身份仍显式配置。
+        return {'serviceOrigin':origin,'redirectUri':module.APP_CALLBACK,'appEntryPath':'/ontology','clientId':'fixture-app-client','clientSecret':'offline-secret-fixture','clientAuthMethod':'body'}
+
     def run_cli(self,config,root):
         path=root/'config.json';path.write_text(json.dumps(config))
         output=io.StringIO()
@@ -68,6 +72,36 @@ class Packaging(unittest.TestCase):
                 self.assertEqual(clients['clientSecret'],'offline-secret-fixture')
                 oauth_info=z.getinfo('oauth-clients.yaml')
                 self.assertEqual((oauth_info.external_attr>>16)&0o777,0o600)
+    def test_minimal_single_origin_config_packages_and_all_addresses_follow_origin(self):
+        first_origin='https://first.example.invalid'
+        origin='https://rotated.example.invalid'
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);path=root/'config.json'
+            first_config=self.minimal_config(first_origin)
+            path.write_text(json.dumps(first_config))
+            first_result=module.assemble(path,root/'first-out')
+            first_config['serviceOrigin']=origin
+            path.write_text(json.dumps(first_config))
+            result=module.assemble(path,root/'rotated-out')
+            with zipfile.ZipFile(first_result['archive']) as z:
+                first_manifest=yaml.safe_load(z.read('manifest.yaml'))
+                self.assertEqual(first_manifest['variables']['base'],first_origin+'/api/v1')
+            with zipfile.ZipFile(result['archive']) as z:
+                manifest=yaml.safe_load(z.read('manifest.yaml'))
+                self.assertEqual(manifest['variables']['base'],origin+'/api/v1')
+                self.assertEqual(manifest['plugin']['iframeUrl'],origin+'/oidc/embed')
+                self.assertEqual(manifest['app']['websiteUrl'],origin+'/oidc/embed')
+                self.assertEqual(manifest['actions'][0]['url'],origin+'/oidc/login')
+                oauth=manifest['auth']['oauth2']
+                self.assertEqual(oauth['authorizeUrl'],origin+'/oidc/app/authorize')
+                self.assertEqual(oauth['tokenUrl'],origin+'/oidc/app/token')
+                self.assertEqual(oauth['userInfoUrl'],origin+'/oidc/app/userinfo')
+                self.assertEqual(oauth['redirectUri'],module.APP_CALLBACK)
+                current_user=next(action for action in manifest['actions'] if action['key']=='getCurrentUser')
+                self.assertEqual(current_user['url'],origin+'/oidc/app/userinfo')
+                service=json.loads(z.read('ontology-operations/scripts/service.json'))
+                self.assertEqual(service['serviceOrigin'],origin)
+                self.assertNotIn(b'first.example.invalid',b' '.join(z.read(name) for name in z.namelist()))
     def test_http_provider_rejected(self):
         with self.assertRaises(ValueError):module.https_url({'tokenEndpoint':'http://identity.invalid/token'},'tokenEndpoint')
     def test_browser_gateway_callback_rejected_for_app_package(self):
@@ -95,7 +129,7 @@ class Packaging(unittest.TestCase):
         config=self.fixture_config();config['tokenEndpoint']='https://identity.invalid/token'
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);path=root/'config.json';path.write_text(json.dumps(config))
-            with self.assertRaisesRegex(ValueError,'配置端点与 App OAuth broker 合同不一致：tokenEndpoint'):
+            with self.assertRaisesRegex(ValueError,'配置端点与 serviceOrigin 合同不一致：tokenEndpoint'):
                 module.assemble(path,root/'out')
             self.assertFalse((root/'out').exists())
     def test_external_entry_path_is_rejected_and_host_path_must_be_relative(self):
@@ -127,12 +161,13 @@ class Packaging(unittest.TestCase):
         manifest=yaml.safe_load(template);manifest['app']['websiteUrl']='https://example.invalid/oidc/login'
         with self.assertRaisesRegex(ValueError,'app.websiteUrl 必须指向 /oidc/embed'):
             module.check_manifest_contract(manifest,origin)
-    def test_embed_url_is_required_in_registration_config(self):
-        config=self.fixture_config();del config['embedUrl']
+    def test_conflicting_legacy_embed_override_is_rejected(self):
+        config=self.fixture_config();config['embedUrl']='https://other.invalid/oidc/embed'
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);path=root/'config.json';path.write_text(json.dumps(config))
-            with self.assertRaisesRegex(ValueError,'缺少配置字段：embedUrl'):
+            with self.assertRaisesRegex(ValueError,'配置端点与 serviceOrigin 合同不一致：embedUrl'):
                 module.assemble(path,root/'out')
+            self.assertFalse((root/'out').exists())
     def test_browser_callback_cannot_replace_workbench_app_callback(self):
         config=self.fixture_config();config['redirectUri']='https://example.invalid/oidc/callback'
         with tempfile.TemporaryDirectory() as temp:

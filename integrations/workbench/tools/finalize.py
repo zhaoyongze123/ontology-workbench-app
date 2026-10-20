@@ -31,6 +31,13 @@ def https_url(config,key,origin_only=False):
     if origin_only and (parsed.path not in ('','/') or parsed.query):raise ValueError('需要纯域名入口：'+key)
     return value.rstrip('/') if origin_only else value
 
+def check_derived_override(config,key,expected):
+    """兼容旧配置，但显式地址必须与唯一域名及固定路由一致。"""
+    if key not in config:return
+    actual=https_url(config,key)
+    if actual!=expected:
+        raise ValueError('配置端点与 serviceOrigin 合同不一致：'+key)
+
 def check_manifest_contract(manifest,origin):
     """确认正式导出要求的嵌入声明、OAuth 映射及业务 ID 精度契约。"""
     browser_url=origin+BROWSER_LOGIN_PATH
@@ -127,16 +134,13 @@ def assemble(config_path,output):
     origin=https_url(config,'serviceOrigin',True)
     browser_url=origin+BROWSER_LOGIN_PATH
     embed_url=origin+EMBED_PATH
-    # 仅允许固定 broker 路径和已确认的 Workbench callback，避免误填上游客户端。
+    # 地址由域名和固定路由派生；兼容旧字段时仍严格校验，防止上游 URL 混入。
     for key,path in BROKER_ENDPOINTS.items():
-        endpoint=https_url(config,key)
-        if endpoint!=origin+path:raise ValueError('配置端点与 App OAuth broker 合同不一致：'+key)
-    page=https_url(config,'pageUrl')
-    configured_embed=https_url(config,'embedUrl')
+        check_derived_override(config,key,origin+path)
+    check_derived_override(config,'pageUrl',browser_url)
+    check_derived_override(config,'embedUrl',embed_url)
     entry=require(config,'appEntryPath')
     redirect=https_url(config,'redirectUri')
-    if page!=browser_url or configured_embed!=embed_url:
-        raise ValueError('pageUrl 和 embedUrl 必须分别指向 /oidc/login 与 /oidc/embed')
     if entry!='/ontology':raise ValueError('appEntryPath 必须为相对宿主路径 /ontology')
     if redirect!=APP_CALLBACK:raise ValueError('redirectUri 必须使用 Workbench App OAuth 固定回调')
     client_id=require(config,'clientId')
