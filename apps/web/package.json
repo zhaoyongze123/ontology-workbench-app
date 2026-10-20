@@ -4,7 +4,7 @@
   "version": "0.2.0-dev.0",
   "scripts": {
     "dev": "max dev",
-    "start": "cross-env API_ENV=prod max dev",
+    "start": "cross-env API_ENV=local max dev",
     "start:local": "cross-env API_ENV=local max dev",
     "start:prod": "cross-env API_ENV=prod max dev",
     "build": "max build",
