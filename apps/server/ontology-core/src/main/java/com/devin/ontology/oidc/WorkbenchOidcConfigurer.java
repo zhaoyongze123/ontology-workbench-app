@@ -2,12 +2,14 @@ package com.devin.ontology.oidc;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.ObjectPostProcessor;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizedClientRepository;
+import org.springframework.security.oauth2.client.web.OAuth2LoginAuthenticationFilter;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.context.NullSecurityContextRepository;
@@ -42,8 +44,15 @@ public class WorkbenchOidcConfigurer {
     public void configure(final HttpSecurity http) throws Exception {
         OAuth2AuthorizationRequestResolver resolver = pkceResolver(registrations);
         http.oauth2Login(oauth -> oauth
-                // 先阻止认证过滤器把含原始 ID Token 的 OidcUser 写进 session；成功处理器只保存内部 principal。
-                .securityContextRepository(new NullSecurityContextRepository())
+                // 该过滤器在 configurer.configure 阶段才创建，必须在对象后处理阶段设置其专属会话策略。
+                .withObjectPostProcessor(new ObjectPostProcessor<OAuth2LoginAuthenticationFilter>() {
+                    @Override
+                    public <O extends OAuth2LoginAuthenticationFilter> O postProcess(final O filter) {
+                        // 原始 OidcUser 含 ID Token，只允许成功处理器持久化映射后的内部 principal。
+                        filter.setSecurityContextRepository(new NullSecurityContextRepository());
+                        return filter;
+                    }
+                })
                 .authorizationEndpoint(endpoint -> endpoint.authorizationRequestResolver(resolver))
                 .redirectionEndpoint(endpoint -> endpoint.baseUri(CALLBACK_PATH))
                 .userInfoEndpoint(endpoint -> endpoint.oidcUserService(oidcUserService))
