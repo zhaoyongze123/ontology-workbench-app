@@ -5,7 +5,6 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.context.annotation.ComponentScan;
 import org.springframework.retry.annotation.EnableRetry;
 
 /**
@@ -19,8 +18,8 @@ import org.springframework.retry.annotation.EnableRetry;
  */
 @Slf4j
 @EnableRetry
+// 业务和 common 模块都位于本包子树，使用 Spring Boot 默认扫描边界即可。
 @SpringBootApplication
-@ComponentScan("com.devin")
 public class OntologyServerApplication {
 
     /**

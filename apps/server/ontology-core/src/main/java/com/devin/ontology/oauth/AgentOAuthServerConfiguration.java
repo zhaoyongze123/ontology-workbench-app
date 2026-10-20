@@ -1,14 +1,22 @@
 package com.devin.ontology.oauth;
 
 import com.devin.ontology.security.RequestCorrelationFilter;
+import com.devin.ontology.security.SecurityAuditRecorder;
 import com.devin.ontology.security.TrustedClientAddressResolver;
+import com.devin.ontology.security.AuditActorCaptureFilter;
+import com.devin.ontology.security.OAuthProtocolRateLimitFilter;
+import com.devin.ontology.security.OAuthProtocolRequestLimiter;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import java.util.Arrays;
 import java.util.Set;
+import java.time.Duration;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -17,7 +25,6 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
-import org.springframework.security.oauth2.server.authorization.web.OAuth2TokenEndpointFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.http.HttpStatus;
@@ -31,6 +38,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 /** OAuth 授权服务器只负责 App 授权协议；业务 API 的 Bearer 校验由独立资源链负责。 */
 @Configuration
 @Profile("multiuser")
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 public class AgentOAuthServerConfiguration {
     @Bean
     AuthorizationServerSettings agentAuthorizationServerSettings(
@@ -49,13 +57,30 @@ public class AgentOAuthServerConfiguration {
     }
 
     @Bean
+    FilterRegistrationBean<OAuthTokenTransactionFilter> agentOAuthTokenTransactionFilter(
+            final PlatformTransactionManager transactionManager) {
+        FilterRegistrationBean<OAuthTokenTransactionFilter> registration =
+                new FilterRegistrationBean<>(new OAuthTokenTransactionFilter(transactionManager));
+        registration.setName("agentOAuthTokenTransactionFilter");
+        registration.addUrlPatterns("/oidc/app/token");
+        // 在 Spring Security 之前包裹完整 token 请求，令数据库行锁覆盖读取、校验与授权保存。
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 20);
+        return registration;
+    }
+
+    @Bean
     @Order(1)
     SecurityFilterChain agentOAuthServerFilterChain(final HttpSecurity http,
             final RegisteredClientRepository clients, final OAuth2AuthorizationService authorizations,
             final OAuth2AuthorizationConsentService consents,
             final AuthorizationServerSettings settings,
             final OpaqueOAuth2TokenGenerator tokenGenerator,
-            final PlatformTransactionManager transactionManager) throws Exception {
+            final ObjectMapper mapper,
+            final TrustedClientAddressResolver addressResolver,
+            final SecurityAuditRecorder auditRecorder,
+            final OAuthProtocolRequestLimiter requestLimiter,
+            @Value("${ontology.security.oauth-throttle.cooldown:1m}") final Duration throttleCooldown)
+            throws Exception {
         OAuth2AuthorizationServerConfigurer server = OAuth2AuthorizationServerConfigurer.authorizationServer();
         http.securityMatcher(server.getEndpointsMatcher())
                 .with(server, configurer -> configurer
@@ -70,7 +95,11 @@ public class AgentOAuthServerConfiguration {
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
                 .exceptionHandling(errors -> errors.authenticationEntryPoint(
                         new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
-                .addFilterBefore(new OAuthTokenTransactionFilter(transactionManager), OAuth2TokenEndpointFilter.class)
+                .addFilterBefore(new RequestCorrelationFilter(addressResolver, auditRecorder),
+                        SecurityContextHolderFilter.class)
+                .addFilterAfter(new OAuthProtocolRateLimitFilter(requestLimiter, addressResolver, mapper,
+                        throttleCooldown.toSeconds()), RequestCorrelationFilter.class)
+                .addFilterAfter(new AuditActorCaptureFilter(), AnonymousAuthenticationFilter.class)
                 .requestCache(AbstractHttpConfigurer::disable);
         return http.build();
     }
@@ -79,16 +108,16 @@ public class AgentOAuthServerConfiguration {
     @Order(2)
     SecurityFilterChain agentBearerApiFilterChain(final HttpSecurity http,
             final AgentAccessTokenService tokenService, final ObjectMapper mapper,
-            @Value("${ontology.security.trusted-proxies:}") final String proxyAddresses) throws Exception {
-        Set<String> trustedProxies = Arrays.stream(proxyAddresses.split(","))
-                .map(String::trim).filter(value -> !value.isEmpty()).collect(java.util.stream.Collectors.toSet());
-        TrustedClientAddressResolver resolver = new TrustedClientAddressResolver(trustedProxies);
+            final TrustedClientAddressResolver resolver,
+            final SecurityAuditRecorder auditRecorder) throws Exception {
         org.springframework.security.web.util.matcher.RequestMatcher bearerApi = request -> {
             String header = request.getHeader("Authorization");
             // 业务 API 一旦显式带 Authorization 就进入无状态链，错误凭证不得回退到浏览器 Cookie。
             if (header == null || header.isBlank()) return false;
             String path = request.getRequestURI().substring(request.getContextPath().length());
             return "/oidc/app/userinfo".equals(path) || path.startsWith("/organization/")
+                    || path.startsWith("/projects/") || path.startsWith("/project-invitations/")
+                    || "/users/search".equals(path)
                     || path.startsWith("/graph/") || path.startsWith("/node/")
                     || path.startsWith("/relationship/") || path.startsWith("/cypher/");
         };
@@ -108,8 +137,9 @@ public class AgentOAuthServerConfiguration {
                             response.setCharacterEncoding("UTF-8");
                             mapper.writeValue(response.getWriter(), java.util.Map.of("error", "insufficient_scope"));
                         }))
-                .addFilterBefore(new RequestCorrelationFilter(resolver), SecurityContextHolderFilter.class)
+                .addFilterBefore(new RequestCorrelationFilter(resolver, auditRecorder), SecurityContextHolderFilter.class)
                 .addFilterBefore(new AgentBearerAuthenticationFilter(tokenService, mapper), AnonymousAuthenticationFilter.class)
+                .addFilterAfter(new AuditActorCaptureFilter(), AnonymousAuthenticationFilter.class)
                 .requestCache(AbstractHttpConfigurer::disable);
         return http.build();
     }

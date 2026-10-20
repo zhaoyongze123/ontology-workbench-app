@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.Principal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -37,6 +38,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationService {
     private static final OAuth2TokenType AUTHORIZATION_CODE = new OAuth2TokenType(OAuth2ParameterNames.CODE);
+    private static final OAuth2TokenType CONSENT_STATE = new OAuth2TokenType(OAuth2ParameterNames.STATE);
+    private static final Duration CONSENT_STATE_LIFETIME = Duration.ofMinutes(5);
     private static final String AUTH_REQUEST_ATTRIBUTE = OAuth2AuthorizationRequest.class.getName();
     private static final String PRINCIPAL_ATTRIBUTE = Principal.class.getName();
     private static final RowMapper<AuthorizationRow> ROW_MAPPER = (rs, rowNum) -> new AuthorizationRow(
@@ -49,6 +52,7 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
             instant(rs.getTimestamp("access_issued_at")), instant(rs.getTimestamp("access_expires_at")),
             rs.getBoolean("access_active"), rs.getString("refresh_token_digest"),
             instant(rs.getTimestamp("refresh_issued_at")), instant(rs.getTimestamp("refresh_expires_at")),
+            rs.getString("consent_state_digest"), instant(rs.getTimestamp("consent_state_expires_at")),
             instant(rs.getTimestamp("revoked_at")));
 
     private final JdbcTemplate jdbc;
@@ -82,6 +86,8 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
         }
 
         OAuth2AuthorizationRequest authorizationRequest = authorization.getAttribute(AUTH_REQUEST_ATTRIBUTE);
+        String consentState = authorization.getAttribute(OAuth2ParameterNames.STATE);
+        Instant consentStateExpiresAt = consentState == null ? null : Instant.now().plus(CONSENT_STATE_LIFETIME);
         String requestJson = authorizationRequest == null ? "{}" : encodeAuthorizationRequest(authorizationRequest);
         OAuth2Authorization.Token<OAuth2AuthorizationCode> code = authorization.getToken(OAuth2AuthorizationCode.class);
         OAuth2Authorization.Token<OAuth2AccessToken> access = authorization.getAccessToken();
@@ -105,23 +111,26 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
                 throw new IllegalArgumentException("新授权必须来自已验证的网页登录会话");
             }
             jdbc.update("INSERT INTO ontology.og_app_authorization(id, client_record_id, user_id, auth_version, "
-                            + "login_at, absolute_expires_at, scopes, authorization_request_json, code_digest, "
+                            + "login_at, absolute_expires_at, scopes, authorization_request_json, "
+                            + "consent_state_digest, consent_state_expires_at, code_digest, "
                             + "code_issued_at, code_expires_at, code_used_at, access_token_digest, access_issued_at, "
                             + "access_expires_at, access_active, refresh_token_digest, refresh_issued_at, "
                             + "refresh_expires_at, create_time, update_time) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())",
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())",
                     authorization.getId(), authorization.getRegisteredClientId(), userId, authVersion,
-                    finalLoginAt, finalAbsoluteExpiry, scopes, requestJson,
-                    digest(codeValue), tokenIssuedAt(code), tokenExpiresAt(code), codeUsedAt,
-                    digest(accessValue), tokenIssuedAt(access), tokenExpiresAt(access), accessActive,
-                    digest(refreshValue), tokenIssuedAt(refresh), tokenExpiresAt(refresh));
+                    sqlTimestamp(finalLoginAt), sqlTimestamp(finalAbsoluteExpiry), scopes, requestJson,
+                    digest(consentState), sqlTimestamp(consentStateExpiresAt), digest(codeValue),
+                    sqlTimestamp(tokenIssuedAt(code)), sqlTimestamp(tokenExpiresAt(code)),
+                    sqlTimestamp(codeUsedAt), digest(accessValue), sqlTimestamp(tokenIssuedAt(access)),
+                    sqlTimestamp(tokenExpiresAt(access)), accessActive, digest(refreshValue),
+                    sqlTimestamp(tokenIssuedAt(refresh)), sqlTimestamp(tokenExpiresAt(refresh)));
             if (refreshValue != null && refresh.isActive()) insertRefreshHistory(authorization.getId(), digest(refreshValue));
             return;
         }
 
-        String oldRefreshDigest = jdbc.query("SELECT refresh_token_digest FROM ontology.og_app_authorization "
-                        + "WHERE id = ? FOR UPDATE", (rs, rowNum) -> rs.getString(1), authorization.getId())
-                .stream().findFirst().orElse(null);
+        // queryForObject 可正确返回 SQL NULL；Stream.findFirst() 遇到 null 会抛 NPE。
+        String oldRefreshDigest = jdbc.queryForObject("SELECT refresh_token_digest "
+                + "FROM ontology.og_app_authorization WHERE id = ? FOR UPDATE", String.class, authorization.getId());
         String newRefreshDigest = digest(refreshValue);
         if (oldRefreshDigest != null && !oldRefreshDigest.equals(newRefreshDigest)) {
             jdbc.update("UPDATE ontology.og_app_refresh_token_history SET status = 'REPLACED', "
@@ -133,6 +142,9 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
                         + "authorization_request_json = CASE WHEN ? = '{}' THEN authorization_request_json ELSE ?::jsonb END, "
                         + "code_digest = COALESCE(?, code_digest), code_issued_at = COALESCE(?, code_issued_at), "
                         + "code_expires_at = COALESCE(?, code_expires_at), code_used_at = COALESCE(?, code_used_at), "
+                        + "consent_state_digest = CASE WHEN ? THEN NULL ELSE COALESCE(?, consent_state_digest) END, "
+                        + "consent_state_expires_at = CASE WHEN ? THEN NULL "
+                        + "ELSE COALESCE(?, consent_state_expires_at) END, "
                         + "access_token_digest = COALESCE(?, access_token_digest), "
                         + "access_issued_at = COALESCE(?, access_issued_at), "
                         + "access_expires_at = COALESCE(?, access_expires_at), "
@@ -140,9 +152,12 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
                         + "refresh_token_digest = COALESCE(?, refresh_token_digest), "
                         + "refresh_issued_at = COALESCE(?, refresh_issued_at), "
                         + "refresh_expires_at = COALESCE(?, refresh_expires_at), update_time = NOW() WHERE id = ?",
-                scopes, requestJson, requestJson, digest(codeValue), tokenIssuedAt(code), tokenExpiresAt(code), codeUsedAt,
-                digest(accessValue), tokenIssuedAt(access), tokenExpiresAt(access), accessActive,
-                access != null, newRefreshDigest, tokenIssuedAt(refresh), tokenExpiresAt(refresh), authorization.getId());
+                scopes, requestJson, requestJson, digest(codeValue), sqlTimestamp(tokenIssuedAt(code)),
+                sqlTimestamp(tokenExpiresAt(code)), sqlTimestamp(codeUsedAt), codeValue != null, digest(consentState),
+                codeValue != null, sqlTimestamp(consentStateExpiresAt), digest(accessValue),
+                sqlTimestamp(tokenIssuedAt(access)), sqlTimestamp(tokenExpiresAt(access)), accessActive,
+                access != null, newRefreshDigest, sqlTimestamp(tokenIssuedAt(refresh)),
+                sqlTimestamp(tokenExpiresAt(refresh)), authorization.getId());
         if (refreshValue != null && refresh.isActive()
                 && (oldRefreshDigest == null || !oldRefreshDigest.equals(newRefreshDigest))) {
             insertRefreshHistory(authorization.getId(), newRefreshDigest);
@@ -169,14 +184,26 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
         AuthorizationRow row;
         if (AUTHORIZATION_CODE.equals(tokenType)) {
             row = queryByDigest("a.code_digest", tokenDigest);
+        } else if (CONSENT_STATE.equals(tokenType)) {
+            row = queryByDigest("a.consent_state_digest", tokenDigest);
         } else if (OAuth2TokenType.ACCESS_TOKEN.equals(tokenType)) {
             row = queryByDigest("a.access_token_digest", tokenDigest);
         } else if (OAuth2TokenType.REFRESH_TOKEN.equals(tokenType)) {
+            // 先锁授权主记录，再锁刷新历史；用户撤销也按这个顺序写入，避免刷新/撤销互锁。
             var history = jdbc.query("SELECT authorization_id, status FROM ontology.og_app_refresh_token_history "
-                            + "WHERE token_digest = ? FOR UPDATE",
+                            + "WHERE token_digest = ?",
                     (rs, rowNum) -> new RefreshHistory(rs.getString("authorization_id"), rs.getString("status")),
                     tokenDigest).stream().findFirst().orElse(null);
             if (history == null) return null;
+            if (!lockAuthorization(history.authorizationId())) return null;
+            var currentHistory = jdbc.query("SELECT authorization_id, status FROM ontology.og_app_refresh_token_history "
+                            + "WHERE token_digest = ? FOR UPDATE",
+                    (rs, rowNum) -> new RefreshHistory(rs.getString("authorization_id"), rs.getString("status")),
+                    tokenDigest).stream().findFirst().orElse(null);
+            if (currentHistory == null || !history.authorizationId().equals(currentHistory.authorizationId())) {
+                return null;
+            }
+            history = currentHistory;
             if ("REPLACED".equals(history.status())) {
                 revoke(history.authorizationId(), "APP_REFRESH_TOKEN_REUSE_DETECTED");
                 return null;
@@ -192,6 +219,18 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
             return null;
         }
         if (AUTHORIZATION_CODE.equals(tokenType) && row.codeUsedAt() != null) return null;
+        if (CONSENT_STATE.equals(tokenType)) {
+            if (row.consentStateExpiresAt() == null || !row.consentStateExpiresAt().isAfter(Instant.now())) {
+                jdbc.update("UPDATE ontology.og_app_authorization SET consent_state_digest = NULL, "
+                        + "consent_state_expires_at = NULL, update_time = NOW() WHERE id = ?", row.id());
+                return null;
+            }
+            int consumed = jdbc.update("UPDATE ontology.og_app_authorization SET consent_state_digest = NULL, "
+                            + "consent_state_expires_at = NULL, update_time = NOW() "
+                            + "WHERE id = ? AND consent_state_digest = ? AND consent_state_expires_at > NOW()",
+                    row.id(), tokenDigest);
+            if (consumed != 1) return null;
+        }
         if (OAuth2TokenType.ACCESS_TOKEN.equals(tokenType)
                 && (!row.accessActive() || row.accessExpiresAt() == null || !row.accessExpiresAt().isAfter(Instant.now()))) {
             return null;
@@ -207,6 +246,7 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
     @Transactional
     public boolean revokeForUser(final String authorizationId, final String userId) {
         int owned = jdbc.update("UPDATE ontology.og_app_authorization SET revoked_at = COALESCE(revoked_at, NOW()), "
+                + "consent_state_digest = NULL, consent_state_expires_at = NULL, "
                 + "access_active = FALSE, update_time = NOW() WHERE id = ? AND user_id = ?",
                 authorizationId, userId);
         if (owned == 0) return false;
@@ -243,6 +283,9 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
                 .attribute(PRINCIPAL_ATTRIBUTE, authentication)
                 .attribute(OpaqueOAuth2TokenGenerator.LOGIN_AT_ATTRIBUTE, row.loginAt())
                 .attribute(OpaqueOAuth2TokenGenerator.ABSOLUTE_EXPIRY_ATTRIBUTE, row.absoluteExpiresAt());
+        if (CONSENT_STATE.equals(presentedType)) {
+            builder.attribute(OAuth2ParameterNames.STATE, presentedToken);
+        }
         OAuth2AuthorizationRequest request = decodeAuthorizationRequest(row.authorizationRequestJson());
         if (request != null) builder.attribute(AUTH_REQUEST_ATTRIBUTE, request);
         if (presentedType != null && AUTHORIZATION_CODE.equals(presentedType)) {
@@ -305,17 +348,24 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
     }
 
     private AuthorizationRow queryByDigest(final String column, final String digest) {
-        if (!Set.of("a.code_digest", "a.access_token_digest", "a.refresh_token_digest").contains(column)) {
+        if (!Set.of("a.code_digest", "a.consent_state_digest", "a.access_token_digest",
+                "a.refresh_token_digest").contains(column)) {
             throw new IllegalArgumentException("不支持的 OAuth token 类型");
         }
         return jdbc.query(baseSelect() + " WHERE " + column + " = ? FOR UPDATE", ROW_MAPPER, digest)
                 .stream().findFirst().orElse(null);
     }
 
+    private boolean lockAuthorization(final String authorizationId) {
+        return !jdbc.query("SELECT id FROM ontology.og_app_authorization WHERE id = ? FOR UPDATE",
+                (rs, rowNum) -> rs.getString(1), authorizationId).isEmpty();
+    }
+
     private String baseSelect() {
         return "SELECT a.id, a.client_record_id, c.client_id, a.user_id, a.auth_version, a.login_at, "
                 + "a.absolute_expires_at, a.scopes, a.authorization_request_json::text AS authorization_request_json, "
-                + "a.code_digest, a.code_issued_at, a.code_expires_at, a.code_used_at, a.access_token_digest, "
+                + "a.consent_state_digest, a.consent_state_expires_at, a.code_digest, a.code_issued_at, "
+                + "a.code_expires_at, a.code_used_at, a.access_token_digest, "
                 + "a.access_issued_at, a.access_expires_at, a.access_active, a.refresh_token_digest, "
                 + "a.refresh_issued_at, a.refresh_expires_at, a.revoked_at "
                 + "FROM ontology.og_app_authorization a JOIN ontology.og_app_client c ON c.id = a.client_record_id";
@@ -328,6 +378,7 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
 
     private void revoke(final String authorizationId, final String event) {
         int changed = jdbc.update("UPDATE ontology.og_app_authorization SET revoked_at = COALESCE(revoked_at, NOW()), "
+                + "consent_state_digest = NULL, consent_state_expires_at = NULL, "
                 + "access_active = FALSE, update_time = NOW() WHERE id = ?", authorizationId);
         if (changed > 0) {
             jdbc.update("UPDATE ontology.og_app_refresh_token_history SET status = 'REVOKED' "
@@ -369,6 +420,11 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
         return value == null ? null : value.toInstant();
     }
 
+    /** 将 OAuth 协议时间显式转为 JDBC 时间戳，避免 PostgreSQL 驱动无法推断 Instant 的 SQL 类型。 */
+    private static java.sql.Timestamp sqlTimestamp(final Instant value) {
+        return value == null ? null : java.sql.Timestamp.from(value);
+    }
+
     private static String string(final Object value) {
         return value == null ? null : String.valueOf(value);
     }
@@ -379,5 +435,5 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
             String authorizationRequestJson, String codeDigest, Instant codeIssuedAt, Instant codeExpiresAt,
             Instant codeUsedAt, String accessTokenDigest, Instant accessIssuedAt, Instant accessExpiresAt,
             boolean accessActive, String refreshTokenDigest, Instant refreshIssuedAt, Instant refreshExpiresAt,
-            Instant revokedAt) { }
+            String consentStateDigest, Instant consentStateExpiresAt, Instant revokedAt) { }
 }

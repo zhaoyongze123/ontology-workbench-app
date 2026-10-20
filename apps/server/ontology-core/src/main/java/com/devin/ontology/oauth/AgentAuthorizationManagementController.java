@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -45,12 +47,13 @@ public class AgentAuthorizationManagementController {
 
     @DeleteMapping("/{authorizationId}")
     @Transactional
-    public Map<String, String> revoke(@PathVariable final String authorizationId) {
+    public ResponseEntity<Map<String, String>> revoke(@PathVariable final String authorizationId) {
         InternalUser user = currentIdentity.requireUser();
         if (!authorizations.revokeForUser(authorizationId, user.id())) {
-            throw new IllegalArgumentException("授权不存在");
+            // 对不存在和不属于当前用户的授权统一返回 404，避免泄露其他用户的资源是否存在。
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "not_found"));
         }
-        return Map.of("status", "revoked");
+        return ResponseEntity.ok(Map.of("status", "revoked"));
     }
 
     public record AuthorizationView(String id, String applicationName, String scopes, Instant authorizedAt,

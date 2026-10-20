@@ -9,6 +9,9 @@ import com.devin.ontology.domain.dto.NodeDTO;
 import com.devin.ontology.domain.entity.Organization;
 import com.devin.ontology.strategy.storage.AgeSql;
 import com.devin.ontology.strategy.storage.impl.AgeStrategy;
+import com.devin.ontology.security.SecurityAuditEventWriter;
+import com.devin.ontology.security.LoginAttemptThrottleService;
+import com.devin.ontology.security.OAuthProtocolRequestLimiter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigInteger;
 import java.util.Date;
@@ -50,6 +53,15 @@ class MultiuserDatabaseIntegrationTest {
 
     @Autowired
     private AgeStrategy ageStrategy;
+
+    @Autowired
+    private SecurityAuditEventWriter securityAuditEventWriter;
+
+    @Autowired
+    private OAuthProtocolRequestLimiter oauthProtocolRequestLimiter;
+
+    @Autowired
+    private LoginAttemptThrottleService loginAttemptThrottleService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -112,6 +124,59 @@ class MultiuserDatabaseIntegrationTest {
         });
 
         assertThat(graphNamespaceExists(graphName)).isFalse();
+    }
+
+    @Test
+    void securityFailureAuditSurvivesBusinessRollbackAndRuntimeCannotRewriteIt() {
+        assertRuntimeDatabaseBoundary();
+        String requestId = "audit-it-" + UUID.randomUUID();
+        Long[] eventId = new Long[1];
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            securityAuditEventWriter.appendFailure("SECURITY_ACCESS_DENIED", null,
+                    Map.of("requestId", requestId, "path", "/api/v1/test"));
+            status.setRollbackOnly();
+        });
+
+        eventId[0] = jdbcTemplate.queryForObject(
+                "SELECT id FROM ontology.og_audit_event WHERE details_json->>'requestId' = ?",
+                Long.class, requestId);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE ontology.og_audit_event SET event_type = 'ALTERED' WHERE id = ?", eventId[0]))
+                .cause().hasMessageContaining("append-only");
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "DELETE FROM ontology.og_audit_event WHERE id = ?", eventId[0]))
+                .cause().hasMessageContaining("append-only");
+        assertThatThrownBy(() -> jdbcTemplate.execute("TRUNCATE TABLE ontology.og_audit_event"))
+                .cause().hasMessageContaining("append-only");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT event_type FROM ontology.og_audit_event WHERE id = ?", String.class, eventId[0]))
+                .isEqualTo("SECURITY_ACCESS_DENIED");
+    }
+
+    @Test
+    void oauthRequestBucketsArePersistentIndependentAndHashTheirKeys() {
+        assertRuntimeDatabaseBoundary();
+        String clientId = "oauth-throttle-it-" + UUID.randomUUID();
+        String source = "198.51.100." + java.util.concurrent.ThreadLocalRandom.current().nextInt(1, 255);
+
+        // 默认 5 分钟来源阈值为 60；超过阈值后进入短冷却，桶类型与密码登录完全独立。
+        for (int attempt = 1; attempt <= 61; attempt++) {
+            assertThat(oauthProtocolRequestLimiter.allowRequest("OAUTH_TOKEN", clientId, source))
+                    .isEqualTo(attempt <= 60);
+        }
+        assertThat(loginAttemptThrottleService.isBlocked("oauth-throttle-login-probe", source)).isFalse();
+        assertThat(oauthProtocolRequestLimiter.allowRequest("OAUTH_REVOKE", clientId, source)).isTrue();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ontology.og_credential_request_bucket "
+                + "WHERE credential_type = 'OAUTH_TOKEN' AND key_hash = ?", Long.class, clientId.getBytes()))
+                .isZero();
+
+        String sharedClientId = "oauth-client-throttle-it-" + UUID.randomUUID();
+        for (int attempt = 1; attempt <= 121; attempt++) {
+            String uniqueSource = "203.0.113." + attempt;
+            assertThat(oauthProtocolRequestLimiter.allowRequest("OAUTH_TOKEN", sharedClientId, uniqueSource))
+                    .isEqualTo(attempt <= 120);
+        }
     }
 
     private void assertRuntimeDatabaseBoundary() {

@@ -104,8 +104,9 @@ class LoginAttemptThrottleServiceTest {
         when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(blocked);
     }
 
+    // 非 static 内部类不会被应用组件扫描误注册到真实集成测试上下文。
     @RestController
-    static class LoginEndpoint {
+    class LoginEndpoint {
         @PostMapping("/auth/login")
         void login() {
             throw new AssertionError("limiter must stop the request before authentication");

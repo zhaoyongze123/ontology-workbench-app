@@ -36,6 +36,22 @@ class AgentScopePolicyTest {
         // 本測試只驗證 Scope 層；ProjectAccessService 仍以即時成員角色拒絕 VIEWER。
     }
 
+    @Test
+    void projectDeletionRequiresManageAndUnknownRoutesFailClosed() {
+        Authentication read = authentication("ontology.read");
+        Authentication write = authentication("ontology.write");
+        Authentication manage = authentication("ontology.manage");
+
+        assertFalse(allowed(read, "POST", "/organization/delete"));
+        assertFalse(allowed(write, "POST", "/organization/delete"));
+        assertTrue(allowed(manage, "POST", "/organization/delete"));
+        assertTrue(allowed(read, "GET", "/organization/page"));
+        assertFalse(allowed(write, "GET", "/organization/page"));
+        assertTrue(allowed(write, "POST", "/graph/import/json"));
+        assertFalse(allowed(write, "GET", "/graph/unclassified"));
+        assertFalse(allowed(write, "POST", "/graph/unclassified"));
+    }
+
     private boolean allowed(final Authentication authentication, final String method, final String path) {
         MockHttpServletRequest request = new MockHttpServletRequest(method, path);
         return policy.isAllowed(authentication, request);

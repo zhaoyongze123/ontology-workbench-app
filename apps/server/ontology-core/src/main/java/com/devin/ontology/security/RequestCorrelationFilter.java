@@ -17,9 +17,12 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
     static final String CLIENT_ADDRESS_ATTRIBUTE = "ontology.clientAddress";
 
     private final TrustedClientAddressResolver addressResolver;
+    private final SecurityAuditRecorder auditRecorder;
 
-    public RequestCorrelationFilter(final TrustedClientAddressResolver addressResolver) {
+    public RequestCorrelationFilter(final TrustedClientAddressResolver addressResolver,
+            final SecurityAuditRecorder auditRecorder) {
         this.addressResolver = addressResolver;
+        this.auditRecorder = auditRecorder;
     }
 
     @Override
@@ -38,6 +41,7 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
             if (response.getStatus() >= 400) {
                 log.warn("http request failed requestId={} peer={} method={} path={} status={}",
                         requestId, clientAddress, request.getMethod(), request.getRequestURI(), response.getStatus());
+                auditRecorder.recordResponseFailure(request, response);
             }
             MDC.remove("requestId");
         }

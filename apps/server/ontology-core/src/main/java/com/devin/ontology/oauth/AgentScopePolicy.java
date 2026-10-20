@@ -11,21 +11,27 @@ public final class AgentScopePolicy {
             "/graph/export/json", "/node/page", "/node/getNodeInfo", "/node/optional",
             "/relationship/page", "/relationship/info", "/relationship/optional",
             "/relationship/link/getOntologyRelationshipList", "/organization/page");
+    private static final Set<String> WRITE_ACTIONS = Set.of(
+            "/graph/save", "/graph/edit", "/graph/delete", "/graph/import/json",
+            "/node/saveNode", "/node/editNode", "/node/deleteNode",
+            "/relationship/save", "/relationship/edit", "/relationship/delete");
+    private static final Set<String> PROJECT_MANAGEMENT_ACTIONS = Set.of(
+            "/organization/save", "/organization/edit", "/organization/delete");
 
     public boolean isAllowed(final Authentication authentication, final HttpServletRequest request) {
         if (authentication == null || !authentication.isAuthenticated()) return false;
         String path = request.getRequestURI().substring(request.getContextPath().length());
         if ("/oidc/app/userinfo".equals(path)) return has(authentication, "profile");
         if (path.startsWith("/projects/") || path.startsWith("/project-invitations/")
-                || path.startsWith("/users/")) return has(authentication, "ontology.manage");
-        if (READ_ACTIONS.contains(path) || path.endsWith("/page") || path.endsWith("/info")
-                || path.endsWith("/getInfo") || path.endsWith("/optional") || path.endsWith("/export/json")) {
+                || path.startsWith("/users/") || PROJECT_MANAGEMENT_ACTIONS.contains(path)) {
+            return has(authentication, "ontology.manage");
+        }
+        if (READ_ACTIONS.contains(path)) {
             return has(authentication, "ontology.read");
         }
-        if ("GET".equalsIgnoreCase(request.getMethod()) || "HEAD".equalsIgnoreCase(request.getMethod())) {
-            return has(authentication, "ontology.read");
-        }
-        return has(authentication, "ontology.write");
+        if (WRITE_ACTIONS.contains(path)) return has(authentication, "ontology.write");
+        // 新增 API 必须先明确归类，避免未知 GET 或写路由意外继承宽泛 scope。
+        return false;
     }
 
     private boolean has(final Authentication authentication, final String scope) {
