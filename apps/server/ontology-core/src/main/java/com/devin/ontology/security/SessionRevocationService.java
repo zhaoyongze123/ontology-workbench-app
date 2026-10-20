@@ -21,6 +21,12 @@ public class SessionRevocationService {
         if (updated != 1) {
             throw new IllegalStateException("当前用户不存在，无法撤销会话");
         }
+        // 同一事务撤销 Agent 凭证，auth_version 检查和授权记录状态保持一致。
+        jdbcTemplate.update("UPDATE ontology.og_app_authorization SET revoked_at = COALESCE(revoked_at, NOW()), "
+                + "access_active = FALSE, update_time = NOW() WHERE user_id = ?", actor.id());
+        jdbcTemplate.update("UPDATE ontology.og_app_refresh_token_history h SET status = 'REVOKED' "
+                + "FROM ontology.og_app_authorization a WHERE h.authorization_id = a.id "
+                + "AND a.user_id = ? AND h.status = 'ACTIVE'", actor.id());
         jdbcTemplate.update("INSERT INTO ontology.og_audit_event(event_type, actor_user_id, details_json) "
                         + "VALUES ('USER_SESSIONS_REVOKED', ?, jsonb_build_object('targetUserId', ?))",
                 actor.id(), actor.id());

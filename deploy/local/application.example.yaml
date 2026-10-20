@@ -20,6 +20,8 @@ ontology:
     cookie-secure: true
     cookie-same-site: None
     trusted-origins: ${ONTOLOGY_PUBLIC_ORIGIN}
+    # 仅信任本机 Nginx；线上应填写实际代理网段，不能信任任意来源的转发头。
+    trusted-proxies: "${ONTOLOGY_TRUSTED_PROXY_CIDRS:127.0.0.1/32,::1/128}"
   workbench:
     enabled: false
     issuer: https://app.workbench.aos.work

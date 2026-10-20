@@ -62,11 +62,15 @@ public class MultiuserSecurityConfiguration {
             final DatabaseAuthenticationProvider databaseAuthenticationProvider,
             final ObjectProvider<WorkbenchOidcConfigurer> workbenchConfigurer,
             final LoginAttemptThrottleService throttleService,
-            @Value("${ontology.security.trusted-origins:}") final String origins) throws Exception {
+            @Value("${ontology.security.trusted-origins:}") final String origins,
+            @Value("${ontology.security.trusted-proxies:}") final String proxyAddresses) throws Exception {
         HttpSessionCsrfTokenRepository csrfRepository = new HttpSessionCsrfTokenRepository();
         csrfRepository.setHeaderName("X-CSRF-TOKEN");
         Set<String> trustedOrigins = Arrays.stream(origins.split(","))
                 .map(String::trim).filter(value -> !value.isEmpty()).collect(Collectors.toUnmodifiableSet());
+        Set<String> trustedProxyCidrs = Arrays.stream(proxyAddresses.split(","))
+                .map(String::trim).filter(value -> !value.isEmpty()).collect(Collectors.toUnmodifiableSet());
+        TrustedClientAddressResolver addressResolver = new TrustedClientAddressResolver(trustedProxyCidrs);
 
         http.csrf(csrf -> csrf.csrfTokenRepository(csrfRepository))
                 .cors(AbstractHttpConfigurer::disable)
@@ -77,8 +81,11 @@ public class MultiuserSecurityConfiguration {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/login", "/auth/csrf", "/auth/options").permitAll()
                         .requestMatchers("/oauth2/authorization/workbench", "/oidc/callback").permitAll()
+                        .requestMatchers("/oidc/app/consent").authenticated()
                         .requestMatchers("/auth/me", "/auth/logout", "/auth/logout-all",
-                                "/auth/workbench/bind").authenticated()
+                                "/auth/workbench/bind", "/auth/app-authorizations",
+                                "/auth/app-authorizations/**").authenticated()
+                        .requestMatchers("/admin/**").authenticated()
                         .requestMatchers("/organization/**", "/graph/**", "/node/**", "/relationship/**",
                                 "/cypher/query", "/projects/**", "/project-invitations/**", "/users/search")
                         .authenticated()
@@ -107,7 +114,7 @@ public class MultiuserSecurityConfiguration {
                             try {
                                 if (exception instanceof org.springframework.security.authentication.BadCredentialsException) {
                                     throttleService.recordFailure(request.getParameter("username"),
-                                            request.getRemoteAddr());
+                                            addressResolver.resolve(request));
                                 }
                                 jsonError(response, objectMapper, 401, "invalid_credentials");
                             } catch (RuntimeException unavailable) {
@@ -126,8 +133,10 @@ public class MultiuserSecurityConfiguration {
                                 objectMapper, 401, "unauthorized"))
                         .accessDeniedHandler((request, response, exception) -> jsonError(response,
                                 objectMapper, 403, "forbidden")))
+                .addFilterBefore(new RequestCorrelationFilter(addressResolver),
+                        org.springframework.security.web.context.SecurityContextHolderFilter.class)
                 .addFilterBefore(new TrustedOriginFilter(trustedOrigins), CsrfFilter.class)
-                .addFilterBefore(new LoginRateLimitFilter(throttleService, objectMapper),
+                .addFilterBefore(new LoginRateLimitFilter(throttleService, objectMapper, addressResolver),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(new SessionValidityFilter(identities),
                         org.springframework.security.web.context.SecurityContextHolderFilter.class)

@@ -14,10 +14,13 @@ import org.springframework.web.filter.OncePerRequestFilter;
 final class LoginRateLimitFilter extends OncePerRequestFilter {
     private final LoginAttemptThrottleService throttleService;
     private final ObjectMapper objectMapper;
+    private final TrustedClientAddressResolver addressResolver;
 
-    LoginRateLimitFilter(final LoginAttemptThrottleService throttleService, final ObjectMapper objectMapper) {
+    LoginRateLimitFilter(final LoginAttemptThrottleService throttleService, final ObjectMapper objectMapper,
+            final TrustedClientAddressResolver addressResolver) {
         this.throttleService = throttleService;
         this.objectMapper = objectMapper;
+        this.addressResolver = addressResolver;
     }
 
     @Override
@@ -30,8 +33,7 @@ final class LoginRateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(final HttpServletRequest request, final HttpServletResponse response,
             final FilterChain filterChain) throws ServletException, IOException {
         try {
-            // 只信任 Servlet socket peer；将来使用 Nginx 时由受信入口先解析代理头，再传入可信 remoteAddr。
-            if (throttleService.isBlocked(request.getParameter("username"), request.getRemoteAddr())) {
+            if (throttleService.isBlocked(request.getParameter("username"), addressResolver.resolve(request))) {
                 writeError(response, 429, "too_many_attempts");
                 return;
             }
