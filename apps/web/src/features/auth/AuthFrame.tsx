@@ -22,6 +22,12 @@ const AuthFrame: React.FC<React.PropsWithChildren<{ user: InternalUser }>> = ({ 
 
   const items: MenuProps['items'] = [
     { key: 'invitations', label: '站内邀请' },
+    { key: 'app-authorizations', label: 'App 授权' },
+    ...(user.systemAdmin ? [
+      { key: 'admin-users', label: '用户管理' },
+      { key: 'admin-clients', label: 'OAuth 客户端' },
+      { key: 'admin-audit', label: '审计记录' },
+    ] : []),
     { key: 'bind', label: '绑定 Workbench' },
     { type: 'divider' },
     { key: 'logout', label: '退出登录' },
@@ -31,6 +37,14 @@ const AuthFrame: React.FC<React.PropsWithChildren<{ user: InternalUser }>> = ({ 
   const handleMenuClick: MenuProps['onClick'] = async ({ key }) => {
     if (key === 'invitations') {
       navigate('/invitations');
+    } else if (key === 'app-authorizations') {
+      navigate('/settings/app-authorizations');
+    } else if (key === 'admin-users') {
+      navigate('/admin/users');
+    } else if (key === 'admin-clients') {
+      navigate('/admin/oauth-clients');
+    } else if (key === 'admin-audit') {
+      navigate('/admin/audit-events');
     } else if (key === 'bind') {
       try {
         const result = await beginWorkbenchBinding();

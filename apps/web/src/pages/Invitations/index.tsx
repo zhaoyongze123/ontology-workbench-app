@@ -1,6 +1,6 @@
 import { getMyInvitations, respondProjectInvitation, type ProjectInvitation } from '@/features/projects/service';
 import { CalendarOutlined, CheckOutlined, CloseOutlined, MailOutlined } from '@ant-design/icons';
-import { Alert, App, Button, Card, Empty, List, Space, Tag, Typography } from 'antd';
+import { Alert, App, Button, Card, Empty, List, Pagination, Space, Tag, Typography } from 'antd';
 import React, { useCallback, useEffect, useState } from 'react';
 
 const roleName: Record<string, string> = { ADMIN: '管理员', EDITOR: '编辑者', VIEWER: '只读成员' };
@@ -11,20 +11,23 @@ const InvitationsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [busyId, setBusyId] = useState('');
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError('');
     try {
-      const response = await getMyInvitations(1, 100);
+      const response = await getMyInvitations(page, 20);
       setRows(response.data || []);
+      setTotal(response.addition?.total || 0);
     } catch (error) {
       // 查询失败与空邀请是不同状态，保留可重试的错误反馈。
       setLoadError((error as Error)?.message || '邀请加载失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -79,6 +82,8 @@ const InvitationsPage: React.FC = () => {
             </List.Item>
           )}
         />
+        {!loadError && total > 20 ? <Pagination style={{ marginTop: 16, textAlign: 'right' }} current={page}
+          pageSize={20} total={total} onChange={setPage} showSizeChanger={false} /> : null}
       </Card>
     </main>
   );

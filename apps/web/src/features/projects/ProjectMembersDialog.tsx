@@ -13,7 +13,7 @@ import {
   type ProjectUserOption,
 } from './service';
 import { DeleteOutlined, CrownOutlined } from '@ant-design/icons';
-import { App, Button, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'umi';
@@ -27,6 +27,10 @@ const ProjectMembersDialog: React.FC<Props> = ({ projectId, access, open, onClos
   const { message, modal } = App.useApp();
   const navigate = useNavigate();
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [memberTotal, setMemberTotal] = useState(0);
+  const [memberPage, setMemberPage] = useState(1);
+  const [memberPageSize, setMemberPageSize] = useState(20);
+  const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [users, setUsers] = useState<ProjectUserOption[]>([]);
@@ -39,6 +43,7 @@ const ProjectMembersDialog: React.FC<Props> = ({ projectId, access, open, onClos
   const isOwner = access.role === 'OWNER';
   const isSystemAdmin = access.role === 'SYSTEM_ADMIN';
   const canManage = capabilities.includes('MANAGE_MEMBERS');
+  const canTransferOwnership = capabilities.includes('TRANSFER_OWNERSHIP');
   const inviteRoles = useMemo(() => (isOwner || isSystemAdmin
     ? ['ADMIN', 'EDITOR', 'VIEWER'] as ProjectRole[]
     : ['EDITOR', 'VIEWER'] as ProjectRole[]), [isOwner, isSystemAdmin]);
@@ -46,16 +51,18 @@ const ProjectMembersDialog: React.FC<Props> = ({ projectId, access, open, onClos
   const refresh = async () => {
     setLoading(true);
     try {
-      const response = await getProjectMembers(projectId, 1, 100);
+      setLoadError('');
+      const response = await getProjectMembers(projectId, memberPage, memberPageSize);
       setMembers(response.data || []);
-    } catch {
-      setMembers([]);
+      setMemberTotal(response.addition?.total || 0);
+    } catch (error) {
+      setLoadError((error as Error)?.message || '成员列表加载失败');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { if (open) void refresh(); }, [open, projectId]);
+  useEffect(() => { if (open) void refresh(); }, [open, projectId, memberPage, memberPageSize]);
 
   const searchUsers = async () => {
     if (searchText.trim().length < 2) {
@@ -171,7 +178,7 @@ const ProjectMembersDialog: React.FC<Props> = ({ projectId, access, open, onClos
       title: '操作', key: 'actions', width: 110,
       render: (_, member) => (
         <Space>
-          {isOwner && member.role !== 'OWNER' ? (
+          {canTransferOwnership && member.role !== 'OWNER' ? (
             <Popconfirm title="将项目所有权转移给该成员？你将变为管理员。" onConfirm={() => transferOwnership(member)}>
               <Button type="link" size="small" icon={<CrownOutlined />}>转移</Button>
             </Popconfirm>
@@ -188,9 +195,12 @@ const ProjectMembersDialog: React.FC<Props> = ({ projectId, access, open, onClos
 
   return (
     <Modal title="项目成员" open={open} onCancel={onClose} footer={null} width={720} destroyOnClose>
+      {loadError ? <Alert type="error" showIcon message="成员列表加载失败" description={loadError}
+        action={<Button onClick={() => void refresh()}>重试</Button>} /> : null}
       <div style={{ maxHeight: 'min(60vh, 520px)', overflowY: 'auto', minWidth: 0 }}>
         <Table<ProjectMember> size="small" rowKey="userId" loading={loading} columns={columns}
-          dataSource={members} pagination={false} scroll={{ x: 520 }} />
+          dataSource={loadError ? [] : members} scroll={{ x: 520 }} pagination={{ current: memberPage, pageSize: memberPageSize,
+            total: memberTotal, showSizeChanger: true, onChange: (nextPage, nextSize) => { setMemberPage(nextPage); setMemberPageSize(nextSize); } }} />
       </div>
 
       {canManage ? <section style={{ marginTop: 24 }} aria-label="邀请成员">
