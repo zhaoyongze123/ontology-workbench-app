@@ -52,13 +52,34 @@ public final class TrustedClientAddressResolver {
         if (value == null || value.isBlank() || value.length() > 45 || !IP_LITERAL.matcher(value).matches()) {
             return null;
         }
+        if (value.indexOf(':') < 0) return normalizeIpv4(value);
         try {
             InetAddress address = InetAddress.getByName(value);
-            // 拒绝非规范数字 IP（例如只有一段的 legacy IPv4 表示法）。
-            if (value.indexOf(':') < 0 && address.getAddress().length != 4) return null;
             return address.getHostAddress();
         } catch (UnknownHostException invalid) {
             return null;
         }
+    }
+
+    private String normalizeIpv4(final String value) {
+        String[] octets = value.split("\\.", -1);
+        if (octets.length != 4) return null;
+        StringBuilder normalized = new StringBuilder();
+        for (String octet : octets) {
+            // 严格接受四段十进制 IPv4，避免 Java 把 127.1 或前导零写法解释成其他地址。
+            if (octet.isEmpty() || octet.length() > 3 || (octet.length() > 1 && octet.charAt(0) == '0')) {
+                return null;
+            }
+            int number = 0;
+            for (int index = 0; index < octet.length(); index++) {
+                char digit = octet.charAt(index);
+                if (digit < '0' || digit > '9') return null;
+                number = number * 10 + digit - '0';
+            }
+            if (number > 255) return null;
+            if (!normalized.isEmpty()) normalized.append('.');
+            normalized.append(number);
+        }
+        return normalized.toString();
     }
 }

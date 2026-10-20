@@ -40,10 +40,21 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
             // 错误日志只记录元数据；请求/响应正文和异常文本由其他安全边界处理。
             if (response.getStatus() >= 400) {
                 log.warn("http request failed requestId={} peer={} method={} path={} status={}",
-                        requestId, clientAddress, request.getMethod(), request.getRequestURI(), response.getStatus());
+                        requestId, clientAddress, safeLogValue(request.getMethod(), 16),
+                        safeLogValue(request.getRequestURI(), 512), response.getStatus());
                 auditRecorder.recordResponseFailure(request, response);
             }
             MDC.remove("requestId");
         }
+    }
+
+    private String safeLogValue(final String value, final int maxLength) {
+        if (value == null) return "-";
+        StringBuilder sanitized = new StringBuilder(Math.min(value.length(), maxLength));
+        for (int index = 0; index < value.length() && sanitized.length() < maxLength; index++) {
+            char character = value.charAt(index);
+            sanitized.append(Character.isISOControl(character) ? '_' : character);
+        }
+        return sanitized.toString();
     }
 }

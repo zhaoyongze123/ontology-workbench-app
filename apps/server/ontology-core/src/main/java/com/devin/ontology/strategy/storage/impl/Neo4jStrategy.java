@@ -77,7 +77,7 @@ public class Neo4jStrategy extends ChartStorageStrategyAbstract {
                 return null;
             });
         } catch (Exception e) {
-            log.error("删除数据库失败，错误: {}", e.getMessage(), e);
+            log.error("删除图库失败 exceptionType={}", e.getClass().getSimpleName());
         }
     }
 
@@ -96,7 +96,7 @@ public class Neo4jStrategy extends ChartStorageStrategyAbstract {
                 return null;
             });
         } catch (Exception e) {
-            log.error("创建图库异常::::::", e);
+            log.error("创建图库失败 exceptionType={}", e.getClass().getSimpleName());
             throw new BusinessException(ResultEnum.GRAPH_ERROR, "创建图库异常");
         }
     }
@@ -112,7 +112,7 @@ public class Neo4jStrategy extends ChartStorageStrategyAbstract {
                 return null;
             });
         } catch (Exception e) {
-            log.error("创建节点异常::::::", e);
+            log.error("创建节点失败 exceptionType={}", e.getClass().getSimpleName());
             throw new BusinessException(ResultEnum.NODE_ERROR, "创建节点异常");
         }
     }
@@ -172,7 +172,7 @@ public class Neo4jStrategy extends ChartStorageStrategyAbstract {
                 return null;
             });
         } catch (Exception e) {
-            log.error("修改节点失败：{}", nodeDTO.getId(), e);
+            log.error("修改节点失败 exceptionType={}", e.getClass().getSimpleName());
             throw new BusinessException(ResultEnum.NODE_ERROR, "修改节点失败");
         }
     }
@@ -209,10 +209,10 @@ public class Neo4jStrategy extends ChartStorageStrategyAbstract {
             });
         } catch (Exception e) {
             // 删除导入的数据库
-            log.error("图数据导入失败，图库: {}, 错误: {}", generateDatabase(graphDTO.getDbPrefix(), graphDTO.getDatabaseId()), e.getMessage(), e);
+            log.error("图数据导入失败 exceptionType={}", e.getClass().getSimpleName());
             dropDatabase(Collections.singleton(graphDTO.getDatabaseId()), graphDTO.getDbPrefix());
             // 抛出异常，触发PG回滚机制
-            throw new BusinessException(ResultEnum.GRAPH_ERROR.getCode(), e.getMessage());
+            throw new BusinessException(ResultEnum.GRAPH_ERROR.getCode(), "图数据导入失败");
         }
     }
 

@@ -35,6 +35,27 @@ class TrustedClientAddressResolverTest {
         assertEquals("127.0.0.1", resolver.resolve(request));
     }
 
+    @Test
+    void rejectsAmbiguousLegacyIpv4ForwardedAddress() {
+        TrustedClientAddressResolver resolver = new TrustedClientAddressResolver(Set.of("127.0.0.1/32"));
+        MockHttpServletRequest request = request("127.0.0.1");
+        request.addHeader("X-Forwarded-For", "127.1");
+
+        assertEquals("127.0.0.1", resolver.resolve(request));
+    }
+
+    @Test
+    void rejectsIpv4LeadingZerosAndOutOfRangeOctets() {
+        TrustedClientAddressResolver resolver = new TrustedClientAddressResolver(Set.of("127.0.0.1/32"));
+        MockHttpServletRequest leadingZero = request("127.0.0.1");
+        leadingZero.addHeader("X-Forwarded-For", "192.000.2.1");
+        MockHttpServletRequest outOfRange = request("127.0.0.1");
+        outOfRange.addHeader("X-Forwarded-For", "192.0.2.256");
+
+        assertEquals("127.0.0.1", resolver.resolve(leadingZero));
+        assertEquals("127.0.0.1", resolver.resolve(outOfRange));
+    }
+
     private MockHttpServletRequest request(final String remoteAddress) {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRemoteAddr(remoteAddress);

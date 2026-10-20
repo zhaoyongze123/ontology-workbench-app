@@ -37,6 +37,7 @@ import java.util.regex.Pattern;
 @RestControllerAdvice
 @RequiredArgsConstructor
 public class GlobalExceptionHandler {
+    private static final String REQUEST_ID_ATTRIBUTE = "ontology.requestId";
 
     /**
      * 处理业务异常.
@@ -45,8 +46,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(BusinessException.class)
     @ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
-    public ApiResult<?> handleBusinessException(final BusinessException e) {
-        log.error("业务异常: {}", e.getMessage());
+    public ApiResult<?> handleBusinessException(final HttpServletRequest request, final BusinessException e) {
+        logSafeFailure(request, e, e.getErrCode());
         return ApiResult.fail(e.getErrCode(), e.getErrMsg());
     }
 
@@ -57,8 +58,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(ClientException.class)
     @ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
-    public ApiResult<?> handleClientException(final ClientException e) {
-        log.error("客户端异常: {}", e.getMessage());
+    public ApiResult<?> handleClientException(final HttpServletRequest request, final ClientException e) {
+        logSafeFailure(request, e, e.getErrCode());
         return ApiResult.fail(e.getErrCode(), e.getMessage());
     }
 
@@ -84,7 +85,9 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(NonTransientDataAccessResourceException.class)
     @ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
-    public ApiResult<?> handleFatalDiscoveryException(final NonTransientDataAccessResourceException e) {
+    public ApiResult<?> handleFatalDiscoveryException(final HttpServletRequest request,
+            final NonTransientDataAccessResourceException e) {
+        logSafeFailure(request, e, null);
         String errMsg = e.getMessage();
         String errType = "";
         String errData = "";
@@ -110,7 +113,9 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(InvalidDataAccessResourceUsageException.class)
     @ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
-    public ApiResult<?> handleInvalidDataAccessResourceUsageException(final InvalidDataAccessResourceUsageException e) {
+    public ApiResult<?> handleInvalidDataAccessResourceUsageException(final HttpServletRequest request,
+            final InvalidDataAccessResourceUsageException e) {
+        logSafeFailure(request, e, null);
         String errMsg = e.getMessage();
         String errType = "";
         if (errMsg.contains("Neo.ClientError.Statement.SyntaxError")) {
@@ -126,9 +131,9 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(DuplicateKeyException.class)
     @ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
-    public ApiResult<?> handleDuplicateKeyException(final DuplicateKeyException e) {
+    public ApiResult<?> handleDuplicateKeyException(final HttpServletRequest request, final DuplicateKeyException e) {
         Map<String, String> errMap = extractDuplicateKeyAndValue(e.getMessage());
-        log.error("数据库重复Key异常: {}", errMap);
+        logSafeFailure(request, e, ResultEnum.DUPLICATE_KEY.getCode());
         if (!errMap.isEmpty()) {
             return ApiResult.fail(ResultEnum.DUPLICATE_KEY, errMap.get("key"));
         }
@@ -142,8 +147,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(ValidateException.class)
     @ResponseStatus(value = HttpStatus.BAD_REQUEST)
-    public ApiResult<?> handleDuplicateKeyException(final ValidateException e) {
-        log.error("校验异常: {}", e.getMessage());
+    public ApiResult<?> handleDuplicateKeyException(final HttpServletRequest request, final ValidateException e) {
+        logSafeFailure(request, e, e.getErrCode());
         return ApiResult.fail(e.getErrCode(), e.getMessage());
     }
 
@@ -156,10 +161,27 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     @ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResult<?> handleException(final HttpServletRequest request, final Exception e) {
-        // 异常记录只含定位元数据，不能把密码、令牌、查询文本或业务正文写入日志和响应。
-        log.error("请求失败 method={} path={} exceptionType={}",
-                request.getMethod(), request.getRequestURI(), e.getClass().getName());
+        logSafeFailure(request, e, ResultEnum.ERROR.getCode());
         return ApiResult.fail(ResultEnum.ERROR, "请求处理失败，请稍后重试");
+    }
+
+    private void logSafeFailure(final HttpServletRequest request, final Throwable failure, final Integer errorCode) {
+        // 异常消息和 SQL 细节可能含用户输入，只保留排障所需的白名单元数据。
+        log.error("request failed requestId={} method={} path={} exceptionType={} errorCode={}",
+                safeMetadata(request.getAttribute(REQUEST_ID_ATTRIBUTE), 80), safeMetadata(request.getMethod(), 16),
+                safeMetadata(request.getRequestURI(), 512), failure.getClass().getSimpleName(),
+                errorCode == null ? "-" : errorCode);
+    }
+
+    private String safeMetadata(final Object value, final int maxLength) {
+        if (value == null) return "-";
+        String raw = value.toString();
+        StringBuilder sanitized = new StringBuilder(Math.min(raw.length(), maxLength));
+        for (int index = 0; index < raw.length() && sanitized.length() < maxLength; index++) {
+            char character = raw.charAt(index);
+            sanitized.append(Character.isISOControl(character) ? '_' : character);
+        }
+        return sanitized.toString();
     }
 
     /**

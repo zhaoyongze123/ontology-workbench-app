@@ -77,6 +77,22 @@ class LoggerAspectTest {
         assertFalse(output.contains(secretMessage));
     }
 
+    @Test
+    void sanitizesControlCharactersInLoggedRequestPath() throws Throwable {
+        appender.start();
+        logger.addAppender(appender);
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/graph/\tbroken\npath");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request, response));
+
+        new LoggerAspect().aroundAdvice(joinPoint(new Object[0], null));
+
+        String output = appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+                .reduce("", (left, right) -> left + right);
+        assertTrue(output.contains("path=/api/v1/graph/_broken_path"));
+        assertFalse(output.contains("broken\npath"));
+    }
+
     private ProceedingJoinPoint joinPoint(final Object[] arguments, final Object result) throws Throwable {
         ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
         MethodSignature signature = mock(MethodSignature.class);

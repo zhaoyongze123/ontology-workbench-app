@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.test.context.ActiveProfiles;
@@ -143,15 +144,62 @@ class MultiuserDatabaseIntegrationTest {
                 Long.class, requestId);
         assertThatThrownBy(() -> jdbcTemplate.update(
                 "UPDATE ontology.og_audit_event SET event_type = 'ALTERED' WHERE id = ?", eventId[0]))
-                .cause().hasMessageContaining("append-only");
+                .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> jdbcTemplate.update(
                 "DELETE FROM ontology.og_audit_event WHERE id = ?", eventId[0]))
-                .cause().hasMessageContaining("append-only");
+                .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> jdbcTemplate.execute("TRUNCATE TABLE ontology.og_audit_event"))
+                .isInstanceOf(RuntimeException.class);
+
+        JdbcTemplate admin = administrativeJdbcTemplate();
+        assertThatThrownBy(() -> admin.update(
+                "UPDATE ontology.og_audit_event SET event_type = 'ALTERED' WHERE id = ?", eventId[0]))
+                .cause().hasMessageContaining("append-only");
+        assertThatThrownBy(() -> admin.update(
+                "DELETE FROM ontology.og_audit_event WHERE id = ?", eventId[0]))
+                .cause().hasMessageContaining("append-only");
+        assertThatThrownBy(() -> admin.execute("TRUNCATE TABLE ontology.og_audit_event"))
                 .cause().hasMessageContaining("append-only");
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT event_type FROM ontology.og_audit_event WHERE id = ?", String.class, eventId[0]))
                 .isEqualTo("SECURITY_ACCESS_DENIED");
+    }
+
+    @Test
+    void auditRetentionIsManualConfiguredAndUnavailableToRuntimeRole() {
+        assertRuntimeDatabaseBoundary();
+        JdbcTemplate admin = administrativeJdbcTemplate();
+        admin.update("DELETE FROM ontology.og_audit_retention_policy WHERE policy_key = 1");
+
+        assertThatThrownBy(() -> jdbcTemplate.queryForObject(
+                "SELECT ontology.prune_expired_audit_events()", Long.class))
+                .rootCause().hasMessageContaining("permission denied for function");
+        assertThatThrownBy(() -> admin.queryForObject(
+                "SELECT ontology.prune_expired_audit_events()", Long.class))
+                .rootCause().hasMessageContaining("audit retention policy is not configured");
+
+        String expiredMarker = "audit-retention-expired-" + UUID.randomUUID();
+        String retainedMarker = "audit-retention-retained-" + UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO ontology.og_audit_event(event_type, details_json, create_time) "
+                        + "VALUES ('IT_RETENTION_PROBE', ?::jsonb, LOCALTIMESTAMP - INTERVAL '40 days')",
+                "{\"marker\":\"" + expiredMarker + "\"}");
+        jdbcTemplate.update("INSERT INTO ontology.og_audit_event(event_type, details_json) "
+                        + "VALUES ('IT_RETENTION_PROBE', ?::jsonb)",
+                "{\"marker\":\"" + retainedMarker + "\"}");
+        admin.update("INSERT INTO ontology.og_audit_retention_policy(policy_key, retention_days) VALUES (1, 30)");
+
+        Long deleted = admin.queryForObject("SELECT ontology.prune_expired_audit_events()", Long.class);
+
+        assertThat(deleted).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ontology.og_audit_event "
+                + "WHERE details_json->>'marker' = ?", Long.class, expiredMarker)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ontology.og_audit_event "
+                + "WHERE details_json->>'marker' = ?", Long.class, retainedMarker)).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ontology.og_audit_event "
+                + "WHERE event_type = 'AUDIT_RETENTION_CLEANUP' "
+                + "AND details_json->>'deletedCount' = '1' AND details_json->>'retentionDays' = '30'",
+                Long.class)).isEqualTo(1L);
+        admin.update("DELETE FROM ontology.og_audit_retention_policy WHERE policy_key = 1");
     }
 
     @Test
@@ -188,6 +236,15 @@ class MultiuserDatabaseIntegrationTest {
         Boolean superuser = jdbcTemplate.queryForObject(
                 "SELECT r.rolsuper FROM pg_catalog.pg_roles r WHERE r.rolname = current_user", Boolean.class);
         assertThat(superuser).isFalse();
+    }
+
+    private JdbcTemplate administrativeJdbcTemplate() {
+        DriverManagerDataSource dataSource = new DriverManagerDataSource();
+        dataSource.setDriverClassName("org.postgresql.Driver");
+        dataSource.setUrl(requiredEnvironment("ONTOLOGY_IT_JDBC_URL"));
+        dataSource.setUsername("ontology_it_admin");
+        dataSource.setPassword(requiredEnvironment("ONTOLOGY_IT_ADMIN_PASSWORD"));
+        return new JdbcTemplate(dataSource);
     }
 
     private void saveProject(final BigInteger id, final String name) {

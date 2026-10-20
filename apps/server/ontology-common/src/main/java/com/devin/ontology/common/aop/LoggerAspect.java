@@ -85,8 +85,13 @@ public class LoggerAspect {
 
     private String safeMetadata(final Object value) {
         if (value == null) return "-";
-        String text = value.toString().replace('\r', '_').replace('\n', '_');
-        return text.length() <= 300 ? text : text.substring(0, 300);
+        String raw = value.toString();
+        StringBuilder sanitized = new StringBuilder(Math.min(raw.length(), 300));
+        for (int index = 0; index < raw.length() && sanitized.length() < 300; index++) {
+            char character = raw.charAt(index);
+            sanitized.append(Character.isISOControl(character) ? '_' : character);
+        }
+        return sanitized.toString();
     }
 
     private long elapsedMillis(final long startedAt) {
