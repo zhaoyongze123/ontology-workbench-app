@@ -1,0 +1,6 @@
+oauthClients:
+- key: ontology
+  displayName: Ontology
+  authType: oauth2
+  clientId: ''
+  clientSecret: ''

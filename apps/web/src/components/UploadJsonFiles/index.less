@@ -1,0 +1,52 @@
+@import '@/common.less';
+
+.fileName {
+  font-size: 16px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.88);
+  line-height: 24px;
+  .flex(center,start);
+  gap: 8px;
+  margin-top: 16px;
+  width: 100%;
+  
+  :global {
+    .ant-typography {
+      max-width: 250px;
+    }
+  }
+}
+
+.fileContainer {
+  margin-top: 16px;
+  padding: 8px 12px;
+  background-color: #f6ffed;
+  border-radius: 4px;
+  border: 1px solid #b7eb8f;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  min-height: 40px;
+  padding-right: 40px;
+  
+  :global {
+    .ant-typography {
+      margin-bottom: 0;
+    }
+  }
+}
+
+.deleteButton {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 4px;
+  height: 24px;
+  line-height: 24px;
+  
+  &:hover {
+    background-color: rgba(255, 77, 79, 0.1);
+  }
+}

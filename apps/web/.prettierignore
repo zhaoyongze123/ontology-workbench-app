@@ -1,0 +1,19 @@
+# node_modules
+# .umi
+# .umi-production
+.vscode
+/dist
+/node_modules
+/openapi-tool
+/src/.umi
+/src/.umi-production
+/src/.umi-test
+/src/service
+package.lock
+/.env.local
+README.md
+*.png
+*.eot
+*.ttf
+*.woff
+*.svg

@@ -1,0 +1,19 @@
+version: '3.8'
+
+# 前端服务
+services:
+  ontology-frontend:
+    restart: always
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image:  registry.cn-hangzhou.aliyuncs.com/tyrion-image/ontology-frontend:V1-202603021709
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx:/app/config
+      - ./nginx/logs:/var/log/nginx
+    container_name: ontology-frontend
+    environment:
+      - SERVER_HOST=http://192.168.110.109:13001
+    privileged: true

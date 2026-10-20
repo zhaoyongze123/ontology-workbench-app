@@ -1,0 +1,22 @@
+# Windows Server (Nano)
+FROM eclipse-temurin:17-jre-nanoserver-ltsc2022
+
+# 设置元数据
+LABEL maintainer="devin <wzh.devin@gmail.com>"
+LABEL author="devin"
+LABEL email="wzh.devin@gmail.com"
+LABEL version="0.0.1"
+LABEL description="Ontology知识图谱管理系统"
+LABEL vendor="意言科技（Tyrion AI）"
+
+# 工作目录
+WORKDIR C:/app
+
+# 打包文件
+COPY ./ontology-core/target/ontology-core-0.0.1.jar ./ontology_core-0.0.1.jar
+
+# 暴露端口
+EXPOSE 13001
+
+# 运行
+CMD ["cmd", "/c", "java", "-Duser.timezone=Asia/Shanghai", "%JAVA_OPTS%", "-jar", "ontology_core-0.0.1.jar"]

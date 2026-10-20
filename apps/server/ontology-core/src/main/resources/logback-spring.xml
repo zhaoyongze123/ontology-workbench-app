@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- 定义日志文件的存储地址，使用相对路径 -->
+    <property name="LOG_HOME" value="logs"/>
+
+    <!-- 自定义日志颜色转换器 -->
+    <conversionRule conversionWord="clr" converterClass="org.springframework.boot.logging.logback.ColorConverter"/>
+
+    <!-- 定义控制台日志级别的颜色 -->
+    <property name="CONSOLE_LOG_PATTERN"
+              value="%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}) [ %white(%thread) ] %clr(%-5level) %blue(%logger{50}) %magenta(:::) %msg%n"/>
+    <!-- 输出文件的日志格式 -->
+    <property name="FILE_LOG_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [ %thread ] %-5level %logger{50} ::: %msg%n"/>
+
+    <!-- 控制台输出 -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <!-- 控制台日志输出格式，包含时间、线程、彩色日志级别、类名、方法名、行号和日志内容 -->
+            <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- ==================== SERVICE 目录 - 全部日志 ==================== -->
+    <!-- 按照每天生成日志文件，保存所有级别的日志 -->
+    <appender name="SERVICE_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- 当前日志文件 -->
+        <file>${LOG_HOME}/service/service.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- 日志文件输出的文件名，按年-月-日命名 -->
+            <FileNamePattern>${LOG_HOME}/service/%d{yyyy-MM-dd}.log</FileNamePattern>
+            <!-- 日志文件保留天数：30天 -->
+            <MaxHistory>30</MaxHistory>
+            <!-- 日志文件总大小限制 -->
+            <totalSizeCap>10GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <!-- 文件日志输出格式 -->
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <!-- 日志级别过滤器：接受所有级别 -->
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
+    </appender>
+
+    <!-- ==================== ERROR 目录 - 仅错误日志 ==================== -->
+    <!-- 按照每天生成错误日志文件，只保存 ERROR 级别的日志 -->
+    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- 当前错误日志文件 -->
+        <file>${LOG_HOME}/error/error.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- 错误日志文件输出的文件名，按年-月-日命名 -->
+            <FileNamePattern>${LOG_HOME}/error/%d{yyyy-MM-dd}.log</FileNamePattern>
+            <!-- 日志文件保留天数：60天 -->
+            <MaxHistory>60</MaxHistory>
+            <!-- 日志文件总大小限制 -->
+            <totalSizeCap>5GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <!-- 文件日志输出格式 -->
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <!-- 日志级别过滤器：只接受 ERROR 级别 -->
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+    </appender>
+
+    <!-- ==================== 异步日志输出 ==================== -->
+    <!-- 异步输出 SERVICE 日志，提高系统性能 -->
+    <appender name="ASYNC_SERVICE_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <!-- 不丢失日志，如果队列已满，会阻塞而不是丢弃日志 -->
+        <discardingThreshold>0</discardingThreshold>
+        <!-- 队列大小 -->
+        <queueSize>512</queueSize>
+        <!-- 添加附加的appender -->
+        <appender-ref ref="SERVICE_FILE"/>
+    </appender>
+
+    <!-- 异步输出 ERROR 日志，提高系统性能 -->
+    <appender name="ASYNC_ERROR_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <!-- 不丢失错误日志 -->
+        <discardingThreshold>0</discardingThreshold>
+        <!-- 队列大小 -->
+        <queueSize>256</queueSize>
+        <!-- 添加附加的appender -->
+        <appender-ref ref="ERROR_FILE"/>
+    </appender>
+
+    <!-- ==================== 根日志级别配置 ==================== -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="ASYNC_SERVICE_FILE"/>
+        <appender-ref ref="ASYNC_ERROR_FILE"/>
+    </root>
+
+    <!-- ==================== 第三方库的日志级别 ==================== -->
+    <logger name="org.springframework" level="INFO"/>
+    <logger name="org.hibernate" level="INFO"/>
+    <logger name="com.zaxxer.hikari" level="INFO"/>
+
+    <!-- ==================== 你的应用日志级别 ==================== -->
+    <logger name="com.devin.ontology" level="DEBUG"/>
+</configuration>

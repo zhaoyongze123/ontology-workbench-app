@@ -1,0 +1,752 @@
+schemaVersion: 1
+plugin:
+  key: com.basil.ontology
+  name: Ontology
+  version: 0.1.1
+  providerType: custom
+  description: 管理本体、实体及其关系，并在 Ontology 应用中查看图谱。
+  hasIframe: true
+  iframeUrl: __EMBED_URL__
+app:
+  key: ontology
+  websiteUrl: __EMBED_URL__
+  entryPath: /ontology
+  authProviderKey: ontology
+variables:
+  base: __SERVICE_ORIGIN__/api/v1
+auth:
+  type: oauth2
+  oauth2:
+    authorizeUrl: __AUTHORIZATION_ENDPOINT__
+    tokenUrl: __TOKEN_ENDPOINT__
+    userInfoUrl: __USERINFO_ENDPOINT__
+    redirectUri: __REDIRECT_URI__
+    resultBaseUrl: https://app.workbench.aos.work
+    scopes:
+    - profile
+    options:
+      scopeSeparator: space
+      tokenRequestType: form
+      clientAuthMethod: body
+      pkce: true
+    tokenFields:
+      accessToken: access_token
+      tokenType: token_type
+      expiresIn: expires_in
+    tokenPlacement:
+      type: bearer
+    account:
+      action: getCurrentUser
+      idField: id
+      nameField: username
+actions:
+- key: open
+  name: 打开 Ontology
+  method: GET
+  url: __PAGE_URL__
+  auth: false
+- key: getCurrentUser
+  name: 获取当前用户
+  method: GET
+  url: __USERINFO_ENDPOINT__
+  auth: true
+  responseDataPath: $
+- key: editRelationship
+  name: 修改关系
+  method: PUT
+  url: '{{base}}/relationship/edit'
+  auth: true
+  responseDataPath: $
+  input:
+    id:
+      type: string
+      description: 关系id
+      required: true
+    linkOntologyRelationshipId:
+      type: string
+      description: 实体关系关联本体关系id
+      required: false
+    sourceNodeId:
+      type: string
+      description: 源节点id
+      required: true
+    targetNodeId:
+      type: string
+      description: 目标节点id
+      required: true
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    name:
+      type: string
+      description: 关系名称
+      required: true
+    description:
+      type: string
+      description: 关系描述
+      required: false
+    propertySchemaJson:
+      type: array
+      description: 本体关系属性Schema（实体关系属性JSON格式）
+      required: true
+    propertyJson:
+      type: string
+      description: 实体关系属性Json
+      required: false
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+  body:
+    id: '{{input.id}}'
+    linkOntologyRelationshipId: '{{input.linkOntologyRelationshipId}}'
+    sourceNodeId: '{{input.sourceNodeId}}'
+    targetNodeId: '{{input.targetNodeId}}'
+    graphId: '{{input.graphId}}'
+    name: '{{input.name}}'
+    description: '{{input.description}}'
+    propertySchemaJson: '{{input.propertySchemaJson}}'
+    propertyJson: '{{input.propertyJson}}'
+    graphType: '{{input.graphType}}'
+- key: editOrganization
+  name: 修改项目
+  method: PUT
+  url: '{{base}}/organization/edit'
+  auth: true
+  responseDataPath: $
+  input:
+    id:
+      type: string
+      description: 项目id
+      required: false
+    name:
+      type: string
+      description: 项目名称
+      required: true
+    description:
+      type: string
+      description: 项目描述
+      required: false
+  body:
+    id: '{{input.id}}'
+    name: '{{input.name}}'
+    description: '{{input.description}}'
+- key: editNode
+  name: 修改节点对象
+  method: PUT
+  url: '{{base}}/node/editNode'
+  auth: true
+  responseDataPath: $
+  input:
+    id:
+      type: string
+      description: 节点对象id
+      required: true
+    linkOntologyId:
+      type: string
+      description: 实体节点关联的本体节点对象id
+      required: false
+    name:
+      type: string
+      description: 节点对象名称
+      required: true
+    description:
+      type: string
+      description: 节点对象描述
+      required: false
+    propertySchemaJson:
+      type: array
+      description: 节点对象属性JSON格式定义
+      required: true
+    propertyJson:
+      type: string
+      description: 节点对象属性JSON
+      required: false
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+  body:
+    id: '{{input.id}}'
+    linkOntologyId: '{{input.linkOntologyId}}'
+    name: '{{input.name}}'
+    description: '{{input.description}}'
+    propertySchemaJson: '{{input.propertySchemaJson}}'
+    propertyJson: '{{input.propertyJson}}'
+    graphId: '{{input.graphId}}'
+    graphType: '{{input.graphType}}'
+- key: editGraph
+  name: 修改图谱
+  method: PUT
+  url: '{{base}}/graph/edit'
+  auth: true
+  responseDataPath: $
+  input:
+    id:
+      type: string
+      description: 图谱id
+      required: true
+    name:
+      type: string
+      description: 图谱名称
+      required: true
+    description:
+      type: string
+      description: 图谱描述
+      required: false
+    graphType:
+      type: string
+      description: '图谱类型（ONTOLOGY: 本体图谱；ENTITY: 实体图谱）'
+      required: true
+    linkGraphId:
+      type: string
+      description: 实体图谱关联本体图谱id
+      required: false
+    organizationId:
+      type: string
+      description: 项目id
+      required: true
+  body:
+    id: '{{input.id}}'
+    name: '{{input.name}}'
+    description: '{{input.description}}'
+    graphType: '{{input.graphType}}'
+    linkGraphId: '{{input.linkGraphId}}'
+    organizationId: '{{input.organizationId}}'
+- key: saveRelationship
+  name: 保存关系
+  method: POST
+  url: '{{base}}/relationship/save'
+  auth: true
+  responseDataPath: $
+  input:
+    linkOntologyRelationshipId:
+      type: string
+      description: 实体关系关联本体关系id
+      required: false
+    sourceNodeId:
+      type: string
+      description: 源节点id
+      required: true
+    targetNodeId:
+      type: string
+      description: 目标节点id
+      required: true
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    name:
+      type: string
+      description: 关系名称
+      required: true
+    description:
+      type: string
+      description: 关系描述
+      required: false
+    propertySchemaJson:
+      type: array
+      description: 本体关系属性Schema（实体关系属性JSON格式）
+      required: true
+    propertyJson:
+      type: string
+      description: 实体关系属性Json
+      required: false
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+  body:
+    linkOntologyRelationshipId: '{{input.linkOntologyRelationshipId}}'
+    sourceNodeId: '{{input.sourceNodeId}}'
+    targetNodeId: '{{input.targetNodeId}}'
+    graphId: '{{input.graphId}}'
+    name: '{{input.name}}'
+    description: '{{input.description}}'
+    propertySchemaJson: '{{input.propertySchemaJson}}'
+    propertyJson: '{{input.propertyJson}}'
+    graphType: '{{input.graphType}}'
+- key: pageRelationship
+  name: 分页查询关系
+  method: POST
+  url: '{{base}}/relationship/page'
+  auth: true
+  responseDataPath: $
+  input:
+    pageNum:
+      type: integer
+      description: 当前页码
+      required: false
+    pageSize:
+      type: integer
+      description: 每页数量
+      required: false
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    keyword:
+      type: string
+      description: 关键词
+      required: false
+    relationshipIdList:
+      type: array
+      description: 关系idList
+      items:
+        type: string
+        description: 十进制 ID 字符串
+      required: false
+  body:
+    pageNum: '{{input.pageNum}}'
+    pageSize: '{{input.pageSize}}'
+    graphType: '{{input.graphType}}'
+    graphId: '{{input.graphId}}'
+    keyword: '{{input.keyword}}'
+    relationshipIdList: '{{input.relationshipIdList}}'
+- key: deleteRelationship
+  name: 删除节点关系对象
+  method: POST
+  url: '{{base}}/relationship/delete'
+  auth: true
+  responseDataPath: $
+  input:
+    idList:
+      type: array
+      description: id列表
+      items:
+        type: string
+        description: 十进制 ID 字符串
+      required: false
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    keyword:
+      type: string
+      description: ''
+      required: false
+  body:
+    idList: '{{input.idList}}'
+    graphType: '{{input.graphType}}'
+    graphId: '{{input.graphId}}'
+    keyword: '{{input.keyword}}'
+- key: saveOrganization
+  name: 新建项目
+  method: POST
+  url: '{{base}}/organization/save'
+  auth: true
+  responseDataPath: $
+  input:
+    name:
+      type: string
+      description: 项目名称
+      required: true
+    description:
+      type: string
+      description: 项目描述
+      required: false
+  body:
+    name: '{{input.name}}'
+    description: '{{input.description}}'
+- key: deleteOrganization
+  name: 删除项目
+  method: POST
+  url: '{{base}}/organization/delete'
+  auth: true
+  responseDataPath: $
+  input:
+    organizationId:
+      type: string
+      description: 项目删除Id
+      required: true
+  query:
+    organizationId: '{{input.organizationId}}'
+- key: saveNode
+  name: 保存节点对象
+  method: POST
+  url: '{{base}}/node/saveNode'
+  auth: true
+  responseDataPath: $
+  input:
+    name:
+      type: string
+      description: 节点对象名称
+      required: true
+    description:
+      type: string
+      description: 节点对象描述
+      required: false
+    linkOntologyId:
+      type: string
+      description: 实体节点关联本体节点对象id
+      required: false
+    propertySchemaJson:
+      type: array
+      description: 本体节点对象属性JSON格式定义
+      required: true
+    propertyJson:
+      type: string
+      description: 实体节点对象属性JSON
+      required: false
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    graphType:
+      type: string
+      description: 节点对象类型
+      required: true
+  body:
+    name: '{{input.name}}'
+    description: '{{input.description}}'
+    linkOntologyId: '{{input.linkOntologyId}}'
+    propertySchemaJson: '{{input.propertySchemaJson}}'
+    propertyJson: '{{input.propertyJson}}'
+    graphId: '{{input.graphId}}'
+    graphType: '{{input.graphType}}'
+- key: pageNode
+  name: 分页查询节点对象
+  method: POST
+  url: '{{base}}/node/page'
+  auth: true
+  responseDataPath: $
+  input:
+    pageNum:
+      type: integer
+      description: 当前页码
+      required: false
+    pageSize:
+      type: integer
+      description: 每页数量
+      required: false
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+    keyword:
+      type: string
+      description: 关键词
+      required: false
+    nodeIdList:
+      type: array
+      description: 节点id列表
+      items:
+        type: string
+        description: 十进制 ID 字符串
+      required: false
+    linkOntologyNodeIdList:
+      type: array
+      description: 关联本体节点id列表
+      items:
+        type: string
+        description: 十进制 ID 字符串
+      required: false
+  body:
+    pageNum: '{{input.pageNum}}'
+    pageSize: '{{input.pageSize}}'
+    graphId: '{{input.graphId}}'
+    graphType: '{{input.graphType}}'
+    keyword: '{{input.keyword}}'
+    nodeIdList: '{{input.nodeIdList}}'
+    linkOntologyNodeIdList: '{{input.linkOntologyNodeIdList}}'
+- key: deleteNode
+  name: 删除节点对象
+  method: POST
+  url: '{{base}}/node/deleteNode'
+  auth: true
+  responseDataPath: $
+  input:
+    idList:
+      type: array
+      description: id列表
+      items:
+        type: string
+        description: 十进制 ID 字符串
+      required: false
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+  body:
+    idList: '{{input.idList}}'
+    graphType: '{{input.graphType}}'
+    graphId: '{{input.graphId}}'
+- key: saveGraph
+  name: 保存图谱
+  method: POST
+  url: '{{base}}/graph/save'
+  auth: true
+  responseDataPath: $
+  input:
+    name:
+      type: string
+      description: 图谱名称
+      required: true
+    description:
+      type: string
+      description: 图谱描述
+      required: false
+    graphType:
+      type: string
+      description: '图谱类型（ONTOLOGY: 本体图谱；ENTITY: 实体图谱）'
+      required: true
+    linkGraphId:
+      type: string
+      description: 实体图谱关联本体图谱id
+      required: false
+    organizationId:
+      type: string
+      description: 项目id
+      required: true
+  body:
+    name: '{{input.name}}'
+    description: '{{input.description}}'
+    graphType: '{{input.graphType}}'
+    linkGraphId: '{{input.linkGraphId}}'
+    organizationId: '{{input.organizationId}}'
+- key: getRelationshipOptional
+  name: 获取关系可选对象
+  method: GET
+  url: '{{base}}/relationship/optional'
+  auth: true
+  responseDataPath: $
+  input:
+    graphId:
+      type: string
+      description: ''
+      required: true
+    graphType:
+      type: string
+      description: ''
+      required: true
+  query:
+    graphId: '{{input.graphId}}'
+    graphType: '{{input.graphType}}'
+- key: getLinkOntologyRelationshipList
+  name: 获取关联的本体关系列表
+  method: GET
+  url: '{{base}}/relationship/link/getOntologyRelationshipList'
+  auth: true
+  responseDataPath: $
+  input:
+    sourceNodeId:
+      type: string
+      description: 源节点id
+      required: true
+    targetNodeId:
+      type: string
+      description: 目标节点id
+      required: true
+  query:
+    sourceNodeId: '{{input.sourceNodeId}}'
+    targetNodeId: '{{input.targetNodeId}}'
+- key: getRelationshipInfo
+  name: 获取关系信息
+  method: GET
+  url: '{{base}}/relationship/info'
+  auth: true
+  responseDataPath: $
+  input:
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+    relationshipId:
+      type: string
+      description: 关系id
+      required: true
+  query:
+    graphType: '{{input.graphType}}'
+    relationshipId: '{{input.relationshipId}}'
+- key: organizationPage
+  name: 分页查询项目
+  method: GET
+  url: '{{base}}/organization/page'
+  auth: true
+  responseDataPath: $
+  input:
+    pageNum:
+      type: integer
+      description: 当前页码
+      required: false
+    pageSize:
+      type: integer
+      description: 每页数量
+      required: false
+  query:
+    pageNum: '{{input.pageNum}}'
+    pageSize: '{{input.pageSize}}'
+- key: getNodeOptional
+  name: 获取节点可选对象
+  method: GET
+  url: '{{base}}/node/optional'
+  auth: true
+  responseDataPath: $
+  input:
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+  query:
+    graphId: '{{input.graphId}}'
+    graphType: '{{input.graphType}}'
+- key: getNodeInfo
+  name: 获取节点对象信息
+  method: GET
+  url: '{{base}}/node/getNodeInfo'
+  auth: true
+  responseDataPath: $
+  input:
+    nodeId:
+      type: string
+      description: 节点id
+      required: true
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+  query:
+    nodeId: '{{input.nodeId}}'
+    graphType: '{{input.graphType}}'
+- key: pageGraph
+  name: 分页查询图谱
+  method: GET
+  url: '{{base}}/graph/page'
+  auth: true
+  responseDataPath: $
+  input:
+    pageNum:
+      type: integer
+      description: 当前页码
+      required: false
+    pageSize:
+      type: integer
+      description: 每页数量
+      required: false
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+    organizationId:
+      type: string
+      description: 项目id
+      required: true
+  query:
+    pageNum: '{{input.pageNum}}'
+    pageSize: '{{input.pageSize}}'
+    graphType: '{{input.graphType}}'
+    organizationId: '{{input.organizationId}}'
+- key: getLinkOntologyNodeList
+  name: 获取实体图谱关联的本体图谱的节点列表
+  method: GET
+  url: '{{base}}/graph/link/getOntologyNodeList'
+  auth: true
+  responseDataPath: $
+  input:
+    entityGraphId:
+      type: string
+      description: 实体图谱id
+      required: true
+  query:
+    entityGraphId: '{{input.entityGraphId}}'
+- key: getGraphInfo
+  name: 获取图谱信息
+  method: GET
+  url: '{{base}}/graph/getInfo'
+  auth: true
+  responseDataPath: $
+  input:
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+  query:
+    graphId: '{{input.graphId}}'
+    graphType: '{{input.graphType}}'
+- key: exportGraph
+  name: 导出图谱JSON
+  method: GET
+  url: '{{base}}/graph/export/json'
+  auth: true
+  responseDataPath: $
+  input:
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+  query:
+    graphId: '{{input.graphId}}'
+    graphType: '{{input.graphType}}'
+- key: deleteGraph
+  name: 删除图谱
+  method: DELETE
+  url: '{{base}}/graph/delete'
+  auth: true
+  responseDataPath: $
+  input:
+    graphId:
+      type: string
+      description: 图谱id
+      required: true
+    graphType:
+      type: string
+      description: 图谱类型
+      required: true
+    organizationId:
+      type: string
+      description: 项目id
+      required: true
+  query:
+    graphId: '{{input.graphId}}'
+    graphType: '{{input.graphType}}'
+    organizationId: '{{input.organizationId}}'
+- key: previewGraph
+  name: 预览图谱节点与关系
+  method: POST
+  url: '{{base}}/cypher/query'
+  auth: true
+  input:
+    graphId:
+      type: string
+      required: true
+    graphType:
+      type: string
+      required: true
+  body:
+    graphId: '{{input.graphId}}'
+    graphType: '{{input.graphType}}'
+    cypher: MATCH (n) RETURN n LIMIT 100
+  responseDataPath: $

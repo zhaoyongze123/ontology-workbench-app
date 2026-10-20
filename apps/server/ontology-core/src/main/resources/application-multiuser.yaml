@@ -1,0 +1,34 @@
+spring:
+  autoconfigure:
+    # 当前多用户版本使用 PostgreSQL/AGE，不初始化未使用的 Neo4j 驱动及事务设施。
+    exclude:
+      - org.springframework.boot.autoconfigure.neo4j.Neo4jAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.neo4j.Neo4jDataAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.neo4j.Neo4jRepositoriesAutoConfiguration
+  session:
+    store-type: jdbc
+    timeout: 30m
+    jdbc:
+      initialize-schema: never
+      table-name: ontology.spring_session
+  sql:
+    init:
+      mode: never
+server:
+  servlet:
+    session:
+      cookie:
+        name: ONTOLOGY_SESSION
+        http-only: true
+        secure: true
+        same-site: none
+        # 不设置 domain，保持 host-only Cookie。
+ontology:
+  security:
+    # 精确匹配浏览器 Origin；部署时需按实际前端地址覆盖。
+    trusted-origins: ""
+    login-throttle:
+      account-limit: 10
+      ip-limit: 30
+      window: 5m
+      cooldown: 5m
