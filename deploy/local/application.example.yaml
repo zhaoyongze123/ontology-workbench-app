@@ -1,0 +1,33 @@
+# 复制到仓库之外的私有目录并填写环境变量，不在此文件放真实凭据。
+server:
+  address: 127.0.0.1
+  port: 13002
+spring:
+  datasource:
+    url: ${ONTOLOGY_DB_URL}
+    username: ${ONTOLOGY_DB_USER}
+    password: ${ONTOLOGY_DB_PASSWORD}
+  flyway:
+    enabled: false
+    # 迁移使用维护账号受控执行；日常运行账号不修改数据库结构。
+graph:
+  database:
+    type: age
+    age:
+      preloaded: true
+ontology:
+  security:
+    cookie-secure: true
+    cookie-same-site: None
+    trusted-origins: ${ONTOLOGY_PUBLIC_ORIGIN}
+  workbench:
+    enabled: false
+    issuer: https://app.workbench.aos.work
+    authorization-endpoint: https://app.workbench.aos.work/oidc/authorize
+    token-endpoint: https://app.workbench.aos.work/basilcraw/api/oidc/token
+    jwks-uri: https://app.workbench.aos.work/basilcraw/api/oidc/jwks
+    client-auth-method: post
+    client-id: ${WORKBENCH_OIDC_CLIENT_ID:}
+    client-secret: ${WORKBENCH_OIDC_CLIENT_SECRET:}
+    redirect-uri: ${ONTOLOGY_PUBLIC_ORIGIN}/oidc/callback
+

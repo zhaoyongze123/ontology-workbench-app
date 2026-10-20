@@ -1,0 +1,51 @@
+/** 添加一个包装容器样式 */
+.sideMenuContainer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+
+  .projectSelector {
+    max-width: 160px;
+    padding: 18px 10px;
+    background: #fff;
+    border-right: 1px solid #e8e8e8;
+    border-bottom: 1px solid #e8e8e8;
+    justify-content: center;
+    height: 64px;
+  }
+
+  .menu {
+    flex: 1;
+    overflow-y: auto;
+    background: #fff;
+    padding-top: 4px;
+  }
+
+  .sidebarTrigger {
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    transition: all 0.3s;
+    border-right: 1px solid #e8e8e8;
+  }
+}
+
+/** 当侧边栏折叠时，触发器居中显示 */
+:global(.ant-layout-sider-collapsed) {
+  .sidebarTrigger {
+    justify-content: center;
+    padding-right: 0;
+  }
+
+  .projectSelector {
+    padding: 16px 5px;
+
+    /** 确保按钮居中 */
+    button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
+}

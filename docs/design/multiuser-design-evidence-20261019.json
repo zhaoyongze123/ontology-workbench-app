@@ -1,0 +1,30 @@
+{
+  "checkedAt": "2026-10-19T14:26:12.488080+00:00",
+  "mode": "read_only_design",
+  "databaseContainer": "ontology-local-postgres-1",
+  "databasePort": 15432,
+  "database": "ontology_workbench_local",
+  "ageVersion": "1.6.0",
+  "businessCounts": {
+    "projects": 1,
+    "graphs": 2,
+    "ontologies": 2,
+    "entities": 2,
+    "ontologyRelationships": 1,
+    "entityRelationships": 1
+  },
+  "orphanGraphs": 0,
+  "userOwnershipColumnsFound": false,
+  "currentDatabaseRoleIsSuperuser": true,
+  "flywayAppliedVersions": [
+    "0.0.1"
+  ],
+  "workbenchOidcDiscoveryVerified": true,
+  "authenticationAuthorizationImplementationChangedThisTurn": false,
+  "businessDataChangedThisTurn": false,
+  "limitations": [
+    "No restore drill performed",
+    "No new multiuser implementation validated",
+    "No Workbench workspace or global logout contract confirmed"
+  ]
+}

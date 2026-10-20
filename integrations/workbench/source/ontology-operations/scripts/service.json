@@ -1,0 +1,6 @@
+{
+  "serviceOrigin": "https://taxi-approximately-resume-unlikely.trycloudflare.com",
+  "apiPrefix": "/api/v1",
+  "pagePath": "/ontology-management/",
+  "authEnvironmentPrefix": "APP_OAUTH_ONTOLOGY"
+}

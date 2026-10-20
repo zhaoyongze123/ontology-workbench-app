@@ -1,0 +1,1862 @@
+{
+  "operations": {
+    "editRelationship": {
+      "method": "PUT",
+      "path": "/relationship/edit",
+      "summary": "修改关系",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/RelationshipUpdateVO"
+      },
+      "mutating": true
+    },
+    "editOrganization": {
+      "method": "PUT",
+      "path": "/organization/edit",
+      "summary": "修改项目",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/OrganizationUpdateVO"
+      },
+      "mutating": true
+    },
+    "editNode": {
+      "method": "PUT",
+      "path": "/node/editNode",
+      "summary": "修改节点对象",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/NodeUpdateVO"
+      },
+      "mutating": true
+    },
+    "editGraph": {
+      "method": "PUT",
+      "path": "/graph/edit",
+      "summary": "修改图谱",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/GraphUpdateVO"
+      },
+      "mutating": true
+    },
+    "saveRelationship": {
+      "method": "POST",
+      "path": "/relationship/save",
+      "summary": "保存关系",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/RelationshipSaveVO"
+      },
+      "mutating": true
+    },
+    "pageRelationship": {
+      "method": "POST",
+      "path": "/relationship/page",
+      "summary": "分页查询关系",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/RelationshipQueryVO"
+      },
+      "mutating": false
+    },
+    "deleteRelationship": {
+      "method": "POST",
+      "path": "/relationship/delete",
+      "summary": "删除节点关系对象",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/RelationshipDeleteVO"
+      },
+      "mutating": true
+    },
+    "saveOrganization": {
+      "method": "POST",
+      "path": "/organization/save",
+      "summary": "新建项目",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/OrganizationSaveVO"
+      },
+      "mutating": true
+    },
+    "deleteOrganization": {
+      "method": "POST",
+      "path": "/organization/delete",
+      "summary": "删除项目",
+      "queryParameters": [
+        {
+          "name": "organizationId",
+          "in": "query",
+          "description": "项目删除Id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": true
+    },
+    "saveNode": {
+      "method": "POST",
+      "path": "/node/saveNode",
+      "summary": "保存节点对象",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/NodeSaveVO"
+      },
+      "mutating": true
+    },
+    "pageNode": {
+      "method": "POST",
+      "path": "/node/page",
+      "summary": "分页查询节点对象",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/NodeQueryVO"
+      },
+      "mutating": false
+    },
+    "deleteNode": {
+      "method": "POST",
+      "path": "/node/deleteNode",
+      "summary": "删除节点对象",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/NodeDeleteVO"
+      },
+      "mutating": true
+    },
+    "saveGraph": {
+      "method": "POST",
+      "path": "/graph/save",
+      "summary": "保存图谱",
+      "queryParameters": [],
+      "bodySchema": {
+        "$ref": "#/components/schemas/GraphSaveVO"
+      },
+      "mutating": true
+    },
+    "getRelationshipOptional": {
+      "method": "GET",
+      "path": "/relationship/optional",
+      "summary": "获取关系可选对象",
+      "queryParameters": [
+        {
+          "name": "graphId",
+          "in": "query",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "graphType",
+          "in": "query",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "ONTOLOGY",
+              "ENTITY"
+            ]
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": false
+    },
+    "getLinkOntologyRelationshipList": {
+      "method": "GET",
+      "path": "/relationship/link/getOntologyRelationshipList",
+      "summary": "获取关联的本体关系列表",
+      "queryParameters": [
+        {
+          "name": "sourceNodeId",
+          "in": "query",
+          "description": "源节点id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "targetNodeId",
+          "in": "query",
+          "description": "目标节点id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": false
+    },
+    "getRelationshipInfo": {
+      "method": "GET",
+      "path": "/relationship/info",
+      "summary": "获取关系信息",
+      "queryParameters": [
+        {
+          "name": "graphType",
+          "in": "query",
+          "description": "图谱类型",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "ONTOLOGY",
+              "ENTITY"
+            ]
+          }
+        },
+        {
+          "name": "relationshipId",
+          "in": "query",
+          "description": "关系id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": false
+    },
+    "organizationPage": {
+      "method": "GET",
+      "path": "/organization/page",
+      "summary": "分页查询项目",
+      "queryParameters": [
+        {
+          "name": "pageNum",
+          "in": "query",
+          "description": "当前页码",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "description": "每页数量",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": false
+    },
+    "getNodeOptional": {
+      "method": "GET",
+      "path": "/node/optional",
+      "summary": "获取节点可选对象",
+      "queryParameters": [
+        {
+          "name": "graphId",
+          "in": "query",
+          "description": "图谱id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "graphType",
+          "in": "query",
+          "description": "图谱类型",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "ONTOLOGY",
+              "ENTITY"
+            ]
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": false
+    },
+    "getNodeInfo": {
+      "method": "GET",
+      "path": "/node/getNodeInfo",
+      "summary": "获取节点对象信息",
+      "queryParameters": [
+        {
+          "name": "nodeId",
+          "in": "query",
+          "description": "节点id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "graphType",
+          "in": "query",
+          "description": "图谱类型",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "ONTOLOGY",
+              "ENTITY"
+            ]
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": false
+    },
+    "pageGraph": {
+      "method": "GET",
+      "path": "/graph/page",
+      "summary": "分页查询图谱",
+      "queryParameters": [
+        {
+          "name": "pageNum",
+          "in": "query",
+          "description": "当前页码",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        {
+          "name": "pageSize",
+          "in": "query",
+          "description": "每页数量",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        {
+          "name": "graphType",
+          "in": "query",
+          "description": "图谱类型",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "ONTOLOGY",
+              "ENTITY"
+            ]
+          }
+        },
+        {
+          "name": "organizationId",
+          "in": "query",
+          "description": "项目id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": false
+    },
+    "getLinkOntologyNodeList": {
+      "method": "GET",
+      "path": "/graph/link/getOntologyNodeList",
+      "summary": "获取实体图谱关联的本体图谱的节点列表",
+      "queryParameters": [
+        {
+          "name": "entityGraphId",
+          "in": "query",
+          "description": "实体图谱id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": false
+    },
+    "getGraphInfo": {
+      "method": "GET",
+      "path": "/graph/getInfo",
+      "summary": "获取图谱信息",
+      "queryParameters": [
+        {
+          "name": "graphId",
+          "in": "query",
+          "description": "图谱id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "graphType",
+          "in": "query",
+          "description": "图谱类型",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "ONTOLOGY",
+              "ENTITY"
+            ]
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": false
+    },
+    "exportGraph": {
+      "method": "GET",
+      "path": "/graph/export/json",
+      "summary": "导出图谱JSON",
+      "queryParameters": [
+        {
+          "name": "graphId",
+          "in": "query",
+          "description": "图谱id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "graphType",
+          "in": "query",
+          "description": "图谱类型",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "ONTOLOGY",
+              "ENTITY"
+            ]
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": false
+    },
+    "deleteGraph": {
+      "method": "DELETE",
+      "path": "/graph/delete",
+      "summary": "删除图谱",
+      "queryParameters": [
+        {
+          "name": "graphId",
+          "in": "query",
+          "description": "图谱id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "graphType",
+          "in": "query",
+          "description": "图谱类型",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "ONTOLOGY",
+              "ENTITY"
+            ]
+          }
+        },
+        {
+          "name": "organizationId",
+          "in": "query",
+          "description": "项目id",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "bodySchema": null,
+      "mutating": true
+    },
+    "previewGraph": {
+      "method": "POST",
+      "path": "/cypher/query",
+      "summary": "预览图谱节点与关系",
+      "mutating": false,
+      "fixedPreview": true,
+      "queryParameters": [],
+      "bodySchema": null
+    }
+  },
+  "schemas": {
+    "Addition": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "integer",
+          "description": "总数量",
+          "format": "int32"
+        },
+        "pageNum": {
+          "type": "integer",
+          "description": "当前页",
+          "format": "int32"
+        },
+        "pageSize": {
+          "type": "integer",
+          "description": "总页数",
+          "format": "int32"
+        }
+      },
+      "description": "附加信息"
+    },
+    "ApiResultObject": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "type": "object",
+          "description": "响应数据"
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "PropertySchema": {
+      "required": [
+        "name",
+        "required",
+        "type"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "属性名称"
+        },
+        "type": {
+          "type": "string",
+          "description": "属性类型",
+          "enum": [
+            "STRING",
+            "NUMBER",
+            "BOOLEAN",
+            "OBJECT"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "属性描述"
+        },
+        "required": {
+          "type": "string",
+          "description": "属性是否必填",
+          "enum": [
+            "REQUIRED",
+            "NOT_REQUIRED"
+          ]
+        }
+      },
+      "description": "属性模式"
+    },
+    "RelationshipUpdateVO": {
+      "required": [
+        "graphId",
+        "graphType",
+        "id",
+        "name",
+        "propertySchemaJson",
+        "sourceNodeId",
+        "targetNodeId"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "关系id"
+        },
+        "linkOntologyRelationshipId": {
+          "type": "integer",
+          "description": "实体关系关联本体关系id"
+        },
+        "sourceNodeId": {
+          "type": "integer",
+          "description": "源节点id"
+        },
+        "targetNodeId": {
+          "type": "integer",
+          "description": "目标节点id"
+        },
+        "graphId": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "name": {
+          "type": "string",
+          "description": "关系名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "关系描述"
+        },
+        "propertySchemaJson": {
+          "type": "array",
+          "description": "本体关系属性Schema（实体关系属性JSON格式）",
+          "items": {
+            "$ref": "#/components/schemas/PropertySchema"
+          }
+        },
+        "propertyJson": {
+          "type": "string",
+          "description": "实体关系属性Json"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        }
+      },
+      "description": "本体对象关系UpdateVO"
+    },
+    "ApiResultVoid": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "type": "object",
+          "description": "响应数据"
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "OrganizationUpdateVO": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "项目id"
+        },
+        "name": {
+          "type": "string",
+          "description": "项目名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "项目描述"
+        }
+      },
+      "description": "组织项目UpdateVO"
+    },
+    "NodeUpdateVO": {
+      "required": [
+        "graphId",
+        "graphType",
+        "id",
+        "name",
+        "propertySchemaJson"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "节点对象id"
+        },
+        "linkOntologyId": {
+          "type": "integer",
+          "description": "实体节点关联的本体节点对象id"
+        },
+        "name": {
+          "type": "string",
+          "description": "节点对象名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "节点对象描述"
+        },
+        "propertySchemaJson": {
+          "type": "array",
+          "description": "节点对象属性JSON格式定义",
+          "items": {
+            "$ref": "#/components/schemas/PropertySchema"
+          }
+        },
+        "propertyJson": {
+          "type": "string",
+          "description": "节点对象属性JSON"
+        },
+        "graphId": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        }
+      },
+      "description": "节点对象UpdateVO"
+    },
+    "GraphUpdateVO": {
+      "required": [
+        "graphType",
+        "id",
+        "name",
+        "organizationId"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "name": {
+          "type": "string",
+          "description": "图谱名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "图谱描述"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型（ONTOLOGY: 本体图谱；ENTITY: 实体图谱）",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        },
+        "linkGraphId": {
+          "type": "integer",
+          "description": "实体图谱关联本体图谱id"
+        },
+        "organizationId": {
+          "type": "integer",
+          "description": "项目id"
+        }
+      },
+      "description": "图谱UpdateVO"
+    },
+    "RelationshipSaveVO": {
+      "required": [
+        "graphId",
+        "graphType",
+        "name",
+        "propertySchemaJson",
+        "sourceNodeId",
+        "targetNodeId"
+      ],
+      "type": "object",
+      "properties": {
+        "linkOntologyRelationshipId": {
+          "type": "integer",
+          "description": "实体关系关联本体关系id"
+        },
+        "sourceNodeId": {
+          "type": "integer",
+          "description": "源节点id"
+        },
+        "targetNodeId": {
+          "type": "integer",
+          "description": "目标节点id"
+        },
+        "graphId": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "name": {
+          "type": "string",
+          "description": "关系名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "关系描述"
+        },
+        "propertySchemaJson": {
+          "type": "array",
+          "description": "本体关系属性Schema（实体关系属性JSON格式）",
+          "items": {
+            "$ref": "#/components/schemas/PropertySchema"
+          }
+        },
+        "propertyJson": {
+          "type": "string",
+          "description": "实体关系属性Json"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        }
+      },
+      "description": "节点对象关系SaveVO"
+    },
+    "ApiResultRelationshipVO": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "$ref": "#/components/schemas/RelationshipVO"
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "RelationshipVO": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "关系id"
+        },
+        "sourceNodeId": {
+          "type": "integer",
+          "description": "源节点id"
+        },
+        "sourceNodeName": {
+          "type": "string",
+          "description": "源节点名称"
+        },
+        "targetNodeId": {
+          "type": "integer",
+          "description": "目标节点id"
+        },
+        "targetNodeName": {
+          "type": "string",
+          "description": "目标节点名称"
+        },
+        "name": {
+          "type": "string",
+          "description": "关系名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "关系描述"
+        },
+        "linkOntologyId": {
+          "type": "integer",
+          "description": "实体关系关联本体id"
+        },
+        "linkOntologyName": {
+          "type": "string",
+          "description": "实体关系关联本体名称"
+        },
+        "propertySchemaJson": {
+          "type": "array",
+          "description": "关系属性Schema（本体关系属性JSON格式）",
+          "items": {
+            "$ref": "#/components/schemas/PropertySchema"
+          }
+        },
+        "propertyJson": {
+          "type": "string",
+          "description": "实体关系Json"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        },
+        "createTime": {
+          "type": "string",
+          "description": "创建时间",
+          "format": "date-time"
+        },
+        "updateTime": {
+          "type": "string",
+          "description": "更新时间",
+          "format": "date-time"
+        }
+      },
+      "description": "节点对象关系VO"
+    },
+    "RelationshipQueryVO": {
+      "required": [
+        "graphId",
+        "graphType"
+      ],
+      "type": "object",
+      "properties": {
+        "pageNum": {
+          "type": "integer",
+          "description": "当前页码",
+          "format": "int32"
+        },
+        "pageSize": {
+          "type": "integer",
+          "description": "每页数量",
+          "format": "int32"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        },
+        "graphId": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "keyword": {
+          "type": "string",
+          "description": "关键词"
+        },
+        "relationshipIdList": {
+          "type": "array",
+          "description": "关系idList",
+          "items": {
+            "type": "integer",
+            "description": "关系idList"
+          }
+        }
+      }
+    },
+    "ApiResultListRelationshipVO": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "type": "array",
+          "description": "响应数据",
+          "items": {
+            "$ref": "#/components/schemas/RelationshipVO"
+          }
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "RelationshipDeleteVO": {
+      "required": [
+        "graphId",
+        "graphType"
+      ],
+      "type": "object",
+      "properties": {
+        "idList": {
+          "type": "array",
+          "description": "id列表",
+          "items": {
+            "type": "integer",
+            "description": "id列表"
+          }
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        },
+        "graphId": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "keyword": {
+          "type": "string"
+        }
+      }
+    },
+    "OrganizationSaveVO": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "项目名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "项目描述"
+        }
+      },
+      "description": "组织项目SaveVO"
+    },
+    "ApiResultOrganizationVO": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "$ref": "#/components/schemas/OrganizationVO"
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "OrganizationVO": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "项目id"
+        },
+        "name": {
+          "type": "string",
+          "description": "项目名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "项目描述"
+        },
+        "ontologyGraphTotal": {
+          "type": "integer",
+          "description": "本体图谱数量",
+          "format": "int64"
+        },
+        "entityGraphTotal": {
+          "type": "integer",
+          "description": "实体图谱数量",
+          "format": "int64"
+        },
+        "createTime": {
+          "type": "string",
+          "description": "创建时间",
+          "format": "date-time"
+        },
+        "updateTime": {
+          "type": "string",
+          "description": "更新时间",
+          "format": "date-time"
+        }
+      },
+      "description": "组织项目VO"
+    },
+    "NodeSaveVO": {
+      "required": [
+        "graphId",
+        "graphType",
+        "name",
+        "propertySchemaJson"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "节点对象名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "节点对象描述"
+        },
+        "linkOntologyId": {
+          "type": "integer",
+          "description": "实体节点关联本体节点对象id"
+        },
+        "propertySchemaJson": {
+          "type": "array",
+          "description": "本体节点对象属性JSON格式定义",
+          "items": {
+            "$ref": "#/components/schemas/PropertySchema"
+          }
+        },
+        "propertyJson": {
+          "type": "string",
+          "description": "实体节点对象属性JSON"
+        },
+        "graphId": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "节点对象类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        }
+      },
+      "description": "节点对象SaveVO"
+    },
+    "NodeQueryVO": {
+      "required": [
+        "graphId",
+        "graphType"
+      ],
+      "type": "object",
+      "properties": {
+        "pageNum": {
+          "type": "integer",
+          "description": "当前页码",
+          "format": "int32"
+        },
+        "pageSize": {
+          "type": "integer",
+          "description": "每页数量",
+          "format": "int32"
+        },
+        "graphId": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        },
+        "keyword": {
+          "type": "string",
+          "description": "关键词"
+        },
+        "nodeIdList": {
+          "type": "array",
+          "description": "节点id列表",
+          "items": {
+            "type": "integer",
+            "description": "节点id列表"
+          }
+        },
+        "linkOntologyNodeIdList": {
+          "type": "array",
+          "description": "关联本体节点id列表",
+          "items": {
+            "type": "integer",
+            "description": "关联本体节点id列表"
+          }
+        }
+      },
+      "description": "节点对象(Node)QueryVO"
+    },
+    "ApiResultListNodeVO": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "type": "array",
+          "description": "响应数据",
+          "items": {
+            "$ref": "#/components/schemas/NodeVO"
+          }
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "NodeVO": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "节点对象id"
+        },
+        "linkOntologyId": {
+          "type": "integer",
+          "description": "实体对象关联的本体对象id"
+        },
+        "linkOntologyName": {
+          "type": "string",
+          "description": "实体对象关联的本体对象名称"
+        },
+        "name": {
+          "type": "string",
+          "description": "节点对象名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "节点对象描述"
+        },
+        "propertySchemaJson": {
+          "type": "array",
+          "description": "节点对象属性JSON格式定义",
+          "items": {
+            "$ref": "#/components/schemas/PropertySchema"
+          }
+        },
+        "propertyJson": {
+          "type": "string",
+          "description": "节点对象属性JSON"
+        },
+        "graphId": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        },
+        "createTime": {
+          "type": "string",
+          "description": "创建时间",
+          "format": "date-time"
+        },
+        "updateTime": {
+          "type": "string",
+          "description": "更新时间",
+          "format": "date-time"
+        }
+      },
+      "description": "节点对象VO"
+    },
+    "NodeDeleteVO": {
+      "required": [
+        "graphId",
+        "graphType"
+      ],
+      "type": "object",
+      "properties": {
+        "idList": {
+          "type": "array",
+          "description": "id列表",
+          "items": {
+            "type": "integer",
+            "description": "id列表"
+          }
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        },
+        "graphId": {
+          "type": "integer",
+          "description": "图谱id"
+        }
+      },
+      "description": "节点删除对象VO"
+    },
+    "GraphSaveVO": {
+      "required": [
+        "graphType",
+        "name",
+        "organizationId"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "图谱名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "图谱描述"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型（ONTOLOGY: 本体图谱；ENTITY: 实体图谱）",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        },
+        "linkGraphId": {
+          "type": "integer",
+          "description": "实体图谱关联本体图谱id"
+        },
+        "organizationId": {
+          "type": "integer",
+          "description": "项目id"
+        }
+      },
+      "description": "图谱SaveVO"
+    },
+    "ApiResultGraphVO": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "$ref": "#/components/schemas/GraphVO"
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "GraphVO": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "name": {
+          "type": "string",
+          "description": "图谱名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "图谱描述"
+        },
+        "type": {
+          "type": "string",
+          "description": "图谱类型（ONTOLOGY: 本体图谱；ENTITY: 实体图谱）"
+        },
+        "linkGraphId": {
+          "type": "integer",
+          "description": "实体图谱关联本体图谱id"
+        },
+        "linkGraphName": {
+          "type": "string",
+          "description": "实体图谱关联本体图谱名称"
+        },
+        "hasEntity": {
+          "type": "boolean",
+          "description": "是否含有实体图谱"
+        },
+        "organizationId": {
+          "type": "integer",
+          "description": "项目id"
+        },
+        "createTime": {
+          "type": "string",
+          "description": "创建时间",
+          "format": "date-time"
+        },
+        "updateTime": {
+          "type": "string",
+          "description": "更新时间",
+          "format": "date-time"
+        }
+      },
+      "description": "图谱VO"
+    },
+    "CypherQueryVO": {
+      "required": [
+        "cypher",
+        "graphId",
+        "graphType"
+      ],
+      "type": "object",
+      "properties": {
+        "cypher": {
+          "type": "string",
+          "description": "Cypher语句"
+        },
+        "graphId": {
+          "type": "integer",
+          "description": "图谱id"
+        },
+        "graphType": {
+          "type": "string",
+          "description": "图谱类型",
+          "enum": [
+            "ONTOLOGY",
+            "ENTITY"
+          ]
+        }
+      },
+      "description": "Cypher查询参数"
+    },
+    "ApiResultCollectionMapStringObject": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "type": "array",
+          "description": "响应数据",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "description": "响应数据"
+            },
+            "description": "响应数据"
+          }
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "ApiResultListOptionalVO": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "type": "array",
+          "description": "响应数据",
+          "items": {
+            "$ref": "#/components/schemas/OptionalVO"
+          }
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "OptionalVO": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "可选项ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "可选项名称"
+        },
+        "description": {
+          "type": "string",
+          "description": "可选项描述"
+        }
+      },
+      "description": "可选下拉列表VO"
+    },
+    "ApiResultListOrganizationVO": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "type": "array",
+          "description": "响应数据",
+          "items": {
+            "$ref": "#/components/schemas/OrganizationVO"
+          }
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "ApiResultNodeVO": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "$ref": "#/components/schemas/NodeVO"
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "ApiResultListGraphVO": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "type": "array",
+          "description": "响应数据",
+          "items": {
+            "$ref": "#/components/schemas/GraphVO"
+          }
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "ApiResultJsonGraphInfo": {
+      "type": "object",
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "description": "响应是否成功"
+        },
+        "code": {
+          "type": "integer",
+          "description": "响应码",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string",
+          "description": "响应信息"
+        },
+        "data": {
+          "$ref": "#/components/schemas/JsonGraphInfo"
+        },
+        "addition": {
+          "$ref": "#/components/schemas/Addition"
+        }
+      },
+      "description": "响应结果集"
+    },
+    "Entity": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "propertyJson": {
+          "type": "string"
+        },
+        "ontologyId": {
+          "type": "integer"
+        },
+        "graphId": {
+          "type": "integer"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "EntityRelationship": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "sourceNodeId": {
+          "type": "integer"
+        },
+        "targetNodeId": {
+          "type": "integer"
+        },
+        "graphId": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "propertyJson": {
+          "type": "string"
+        },
+        "ontologyRelationshipId": {
+          "type": "integer"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "Graph": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "linkGraphId": {
+          "type": "integer"
+        },
+        "organizationId": {
+          "type": "integer"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "linkOntologyGraph": {
+          "$ref": "#/components/schemas/Graph"
+        }
+      }
+    },
+    "JsonGraphInfo": {
+      "type": "object",
+      "properties": {
+        "graph": {
+          "$ref": "#/components/schemas/Graph"
+        },
+        "ontologyList": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Ontology"
+          }
+        },
+        "entityList": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Entity"
+          }
+        },
+        "ontologyRelationshipList": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/OntologyRelationship"
+          }
+        },
+        "entityRelationshipList": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/EntityRelationship"
+          }
+        }
+      },
+      "description": "响应数据"
+    },
+    "Ontology": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "propertySchemaJson": {
+          "type": "string"
+        },
+        "graphId": {
+          "type": "integer"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "OntologyRelationship": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "sourceNodeId": {
+          "type": "integer"
+        },
+        "targetNodeId": {
+          "type": "integer"
+        },
+        "graphId": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "propertySchemaJson": {
+          "type": "string"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}
