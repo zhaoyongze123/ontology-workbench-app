@@ -59,61 +59,31 @@ const EVENTS: Record<string, EventPresentation> = {
 };
 
 /** 筛选控件提交稳定事件编码，界面只展示已登记的中文名称。 */
-export const AUDIT_EVENT_OPTIONS = Object.entries(EVENTS).map(([value, event]) => ({
-  value,
-  label: event.label,
-}));
-
-const SHORT_ID_LENGTH = 8;
-
-function shortenedId(value: unknown): string | undefined {
-  if (typeof value !== 'string' || !value.trim()) return undefined;
-  const normalized = value.trim();
-  return normalized.length <= SHORT_ID_LENGTH
-    ? normalized
-    : `${normalized.slice(0, SHORT_ID_LENGTH)}…`;
-}
-
-function detailString(
-  details: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const value = details[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
+export const AUDIT_EVENT_OPTIONS = Object.entries(EVENTS).map(
+  ([value, event]) => ({
+    value,
+    label: event.label,
+  }),
+);
 
 export function presentAuditEvent(
   event: AuditEvent,
 ): EventPresentation & { object: string } {
   const known = EVENTS[event.eventType];
-  const details = event.details || {};
-  let object = '—';
-
-  if (
-    event.eventType.startsWith('ACCOUNT_') ||
-    event.eventType === 'USER_SESSIONS_REVOKED'
-  ) {
-    const userId = shortenedId(detailString(details, 'targetUserId'));
-    if (userId) object = `用户 ID ${userId}`;
-  } else if (event.eventType.startsWith('APP_CLIENT_')) {
-    const clientId = shortenedId(detailString(details, 'clientId'));
-    if (clientId) object = `客户端 ID ${clientId}`;
-  } else if (event.eventType.startsWith('PROJECT_')) {
-    const projectId = shortenedId(detailString(details, 'projectId'));
-    const invitationId = shortenedId(detailString(details, 'invitationId'));
-    const targetUserId = shortenedId(detailString(details, 'targetUserId'));
-    const subject = invitationId
-      ? `邀请 ID ${invitationId}`
-      : targetUserId
-      ? `用户 ID ${targetUserId}`
-      : undefined;
-    if (projectId)
-      object = subject
-        ? `项目 ID ${projectId} · ${subject}`
-        : `项目 ID ${projectId}`;
-  } else if (event.eventType.startsWith('SECURITY_')) {
-    const path = detailString(details, 'path');
-    if (path) object = path;
+  let object = event.objectDisplayName?.trim() || '—';
+  if (!event.objectDisplayName?.trim()) {
+    if (
+      event.eventType.startsWith('ACCOUNT_') ||
+      event.eventType === 'USER_SESSIONS_REVOKED'
+    ) {
+      object = '账号';
+    } else if (event.eventType.startsWith('APP_CLIENT_')) {
+      object = '应用客户端';
+    } else if (event.eventType.startsWith('PROJECT_')) {
+      object = '项目或项目成员';
+    } else if (event.eventType.startsWith('SECURITY_')) {
+      object = '接口请求';
+    }
   }
 
   return {
@@ -123,7 +93,12 @@ export function presentAuditEvent(
   };
 }
 
-export function presentAuditActor(actorUserId: string | null): string {
-  if (!actorUserId?.trim()) return '未记录身份';
-  return `用户 ID ${shortenedId(actorUserId)}`;
+export function presentAuditActor(
+  event: Pick<AuditEvent, 'actorUserId' | 'actorDisplayName' | 'actorUsername'>,
+): string {
+  if (!event.actorUserId?.trim()) return '未记录身份';
+  const displayName = event.actorDisplayName?.trim();
+  const username = event.actorUsername?.trim();
+  if (displayName && username) return `${displayName}（@${username}）`;
+  return displayName || username || '已注销账号';
 }

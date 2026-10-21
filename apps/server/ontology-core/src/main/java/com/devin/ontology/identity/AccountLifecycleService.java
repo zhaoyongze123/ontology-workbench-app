@@ -54,19 +54,38 @@ public class AccountLifecycleService {
     }
 
     public AccountPage listUsers(final int page, final int size) {
+        return listUsers(page, size, null);
+    }
+
+    /** 管理员用户搜索供关联选择器复用；仍由数据库分页，避免前端下载全量账号。 */
+    public AccountPage listUsers(final int page, final int size, final String keyword) {
         requireSystemAdmin();
         if (page < 0 || size < 1 || size > MAX_PAGE_SIZE || (long) page * size > Integer.MAX_VALUE) {
             throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         }
-        List<AccountUserView> users = jdbc.query(
-                "SELECT id, username, display_name, system_admin, enabled, password_activated, create_time "
-                        + "FROM ontology.og_user ORDER BY create_time DESC, id LIMIT ? OFFSET ?",
+        String normalized = keyword == null ? "" : keyword.trim();
+        if (normalized.length() > 120) throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
+        String where = normalized.isEmpty() ? "" : " WHERE username ILIKE ? ESCAPE E'\\\\' "
+                + "OR display_name ILIKE ? ESCAPE E'\\\\'";
+        String pattern = normalized.isEmpty() ? null : "%" + escapeLike(normalized) + "%";
+        Object[] queryArgs = normalized.isEmpty() ? new Object[] { size, page * size }
+                : new Object[] { pattern, pattern, size, page * size };
+        List<AccountUserView> users = jdbc.query("SELECT id, username, display_name, system_admin, enabled, "
+                        + "password_activated, create_time FROM ontology.og_user" + where
+                        + " ORDER BY create_time DESC, id LIMIT ? OFFSET ?",
                 (rs, rowNum) -> new AccountUserView(rs.getString("id"), rs.getString("username"),
                         rs.getString("display_name"), rs.getBoolean("system_admin"), rs.getBoolean("enabled"),
                         rs.getBoolean("password_activated"), rs.getTimestamp("create_time").toLocalDateTime()),
-                size, page * size);
-        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_user", Long.class);
+                queryArgs);
+        Long total = normalized.isEmpty()
+                ? jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_user", Long.class)
+                : jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_user" + where,
+                        Long.class, pattern, pattern);
         return new AccountPage(users, page, size, total == null ? 0 : total);
+    }
+
+    private static String escapeLike(final String value) {
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     public CreatedAccount createPendingUser(final CreateAccountRequest request) {

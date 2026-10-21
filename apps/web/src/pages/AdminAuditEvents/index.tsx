@@ -1,8 +1,8 @@
 import AdminPage from '@/features/admin/AdminPage';
 import {
+  AUDIT_EVENT_OPTIONS,
   presentAuditActor,
   presentAuditEvent,
-  AUDIT_EVENT_OPTIONS,
 } from '@/features/admin/auditPresentation';
 import {
   ADMIN_TIME_ZONE_LABEL,
@@ -10,14 +10,15 @@ import {
 } from '@/features/admin/dateTime';
 import {
   getAuditEvents,
+  getUsers,
   type AuditEvent,
   type AuditEventFilters,
+  type ManagedUser,
 } from '@/features/admin/service';
 import { useAdminRequestError } from '@/features/admin/useAdminRequestError';
 import { useCurrentUser } from '@/features/auth/context';
 import FilterBar from '@/features/lists/FilterBar';
 import ListPagination from '@/features/lists/ListPagination';
-import styles from './index.less';
 import {
   Alert,
   Button,
@@ -36,6 +37,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import React, { useEffect, useRef, useState } from 'react';
+import styles from './index.less';
 
 type DraftFilters = {
   start: string;
@@ -72,10 +74,15 @@ function beijingDateTimeLocal(date: Date): string {
   }).formatToParts(date);
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((item) => item.type === type)?.value || '';
-  return `${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}`;
+  return `${part('year')}-${part('month')}-${part('day')}T${part(
+    'hour',
+  )}:${part('minute')}`;
 }
 
-function asBeijingOffset(value: string, endOfMinute = false): string | undefined {
+function asBeijingOffset(
+  value: string,
+  endOfMinute = false,
+): string | undefined {
   if (!value) return undefined;
   // datetime-local 是不带时区的墙上时间；界面明确按北京时间解释并提交 UTC+08:00。
   return `${value}:${endOfMinute ? '59.999' : '00'}+08:00`;
@@ -113,11 +120,63 @@ const AdminAuditEventsPage: React.FC = () => {
   const [loadError, setLoadError] = useState('');
   const [selectedEvent, setSelectedEvent] = useState<AuditEvent>();
   const [draft, setDraft] = useState<DraftFilters>(EMPTY_DRAFT);
+  const [filterError, setFilterError] = useState('');
+  const [actorUsers, setActorUsers] = useState<ManagedUser[]>([]);
+  const [actorUsersTotal, setActorUsersTotal] = useState(0);
+  const [actorUsersPage, setActorUsersPage] = useState(0);
+  const [actorUsersLoading, setActorUsersLoading] = useState(false);
+  const [actorSearchText, setActorSearchText] = useState('');
+  const [selectedActor, setSelectedActor] = useState<ManagedUser>();
+  const [actorLoadError, setActorLoadError] = useState('');
+  const [actorRefresh, setActorRefresh] = useState(0);
   const [quickRange, setQuickRange] = useState('custom');
-  const [appliedFilters, setAppliedFilters] =
-    useState<AuditEventFilters>({});
+  const [appliedFilters, setAppliedFilters] = useState<AuditEventFilters>({});
   const [filtersDirty, setFiltersDirty] = useState(false);
   const requestSequence = useRef(0);
+  const actorRequestSequence = useRef(0);
+  const actorLoading = useRef(false);
+
+  const loadActorUsers = async (
+    keyword: string,
+    page: number,
+    append: boolean,
+  ) => {
+    if (actorLoading.current) return;
+    const sequence = ++actorRequestSequence.current;
+    actorLoading.current = true;
+    setActorUsersLoading(true);
+    try {
+      const result = await getUsers(page, 20, keyword);
+      if (sequence !== actorRequestSequence.current) return;
+      const nextUsers = result.items || [];
+      setActorUsers((current) =>
+        append
+          ? [
+              ...current,
+              ...nextUsers.filter(
+                (user) => !current.some((item) => item.id === user.id),
+              ),
+            ]
+          : nextUsers,
+      );
+      setActorUsersTotal(result.total || 0);
+      setActorUsersPage(page);
+      setActorLoadError('');
+    } catch (error) {
+      if (sequence !== actorRequestSequence.current) return;
+      const failure = resolveFailure(error);
+      setActorLoadError(failure.message || '用户列表加载失败');
+      if (!append) {
+        setActorUsers([]);
+        setActorUsersTotal(0);
+      }
+    } finally {
+      if (sequence === actorRequestSequence.current) {
+        actorLoading.current = false;
+        setActorUsersLoading(false);
+      }
+    }
+  };
 
   const load = async (
     cursor: number | undefined,
@@ -152,11 +211,28 @@ const AdminAuditEventsPage: React.FC = () => {
   };
 
   useEffect(() => {
-    if (actor.systemAdmin) void load(undefined, [undefined], {}, DEFAULT_PAGE_SIZE);
+    if (actor.systemAdmin)
+      void load(undefined, [undefined], {}, DEFAULT_PAGE_SIZE);
     return () => {
       requestSequence.current += 1;
     };
   }, [actor.systemAdmin]);
+
+  useEffect(() => {
+    if (!actor.systemAdmin) return;
+    const timer = window.setTimeout(
+      () => {
+        actorLoading.current = false;
+        void loadActorUsers(actorSearchText, 0, false);
+      },
+      actorSearchText ? 250 : 0,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      actorRequestSequence.current += 1;
+      actorLoading.current = false;
+    };
+  }, [actor.systemAdmin, actorSearchText, actorRefresh]);
 
   if (!actor.systemAdmin) {
     return (
@@ -178,13 +254,23 @@ const AdminAuditEventsPage: React.FC = () => {
     void load(cursor, [...cursorStack, cursor]);
   };
   const query = () => {
+    if (draft.start && draft.end && draft.start > draft.end) {
+      setFilterError('开始时间不能晚于结束时间。');
+      return;
+    }
+    setFilterError('');
     const filters = toQueryFilters(draft);
     setAppliedFilters(filters);
     setFiltersDirty(false);
     void load(undefined, [undefined], filters);
   };
   const reset = () => {
+    setFilterError('');
     setDraft(EMPTY_DRAFT);
+    setSelectedActor(undefined);
+    setActorSearchText('');
+    setActorLoadError('');
+    setActorRefresh((value) => value + 1);
     setAppliedFilters({});
     setFiltersDirty(false);
     void load(undefined, [undefined], {});
@@ -198,6 +284,7 @@ const AdminAuditEventsPage: React.FC = () => {
     void load(undefined, [undefined], appliedFilters);
   };
   const changeDraft = (next: DraftFilters) => {
+    setFilterError('');
     setDraft(next);
     setQuickRange('custom');
     setFiltersDirty(true);
@@ -218,7 +305,8 @@ const AdminAuditEventsPage: React.FC = () => {
     const start = new Date(now);
     if (value === 'hour') start.setTime(now.getTime() - 60 * 60 * 1000);
     if (value === 'day') start.setTime(now.getTime() - 24 * 60 * 60 * 1000);
-    if (value === 'week') start.setTime(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (value === 'week')
+      start.setTime(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     changeDraft({
       ...draft,
       start: value ? beijingDateTimeLocal(start) : '',
@@ -240,23 +328,14 @@ const AdminAuditEventsPage: React.FC = () => {
       width: 240,
       render: (value: string, event) => {
         const presentation = presentAuditEvent(event);
-        return (
-          <Space direction="vertical" size={2}>
-            <Typography.Text>{presentation.label}</Typography.Text>
-            {presentation.label === '其他事件' ? (
-              <Typography.Text code type="secondary">
-                {value}
-              </Typography.Text>
-            ) : null}
-          </Space>
-        );
+        return <Typography.Text>{presentation.label}</Typography.Text>;
       },
     },
     {
       title: '操作身份',
       dataIndex: 'actorUserId',
       width: 190,
-      render: (value: string | null) => presentAuditActor(value),
+      render: (_, event) => presentAuditActor(event),
     },
     {
       title: '对象',
@@ -302,6 +381,13 @@ const AdminAuditEventsPage: React.FC = () => {
     ? presentAuditEvent(selectedEvent)
     : undefined;
   const details = selectedEvent?.details || {};
+  const actorOptions = [
+    ...(selectedActor &&
+    !actorUsers.some((user) => user.id === selectedActor.id)
+      ? [selectedActor]
+      : []),
+    ...actorUsers,
+  ];
   const requestId = stringDetail(details, 'requestId');
   const endpoint = [
     stringDetail(details, 'method'),
@@ -317,7 +403,12 @@ const AdminAuditEventsPage: React.FC = () => {
   return (
     <AdminPage title="安全审计">
       <FilterBar>
-        <Space className={styles.filterControls} wrap align="end" style={{ width: '100%' }}>
+        <Space
+          className={styles.filterControls}
+          wrap
+          align="end"
+          style={{ width: '100%' }}
+        >
           <label className={styles.filterField}>
             <Typography.Text type="secondary">快捷时间</Typography.Text>
             <Select
@@ -335,25 +426,50 @@ const AdminAuditEventsPage: React.FC = () => {
             />
           </label>
           <label className={styles.filterField}>
-            <Typography.Text type="secondary">开始时间（北京时间）</Typography.Text>
+            <Typography.Text type="secondary">
+              开始时间（北京时间）
+            </Typography.Text>
             <Input
               aria-label="开始时间（北京时间）"
               type="datetime-local"
               value={draft.start}
+              status={filterError ? 'error' : undefined}
+              aria-describedby={
+                filterError ? 'audit-time-filter-error' : undefined
+              }
               style={{ width: '100%' }}
-              onChange={(event) => changeDraft({ ...draft, start: event.target.value })}
+              onChange={(event) =>
+                changeDraft({ ...draft, start: event.target.value })
+              }
             />
           </label>
           <label className={styles.filterField}>
-            <Typography.Text type="secondary">结束时间（北京时间）</Typography.Text>
+            <Typography.Text type="secondary">
+              结束时间（北京时间）
+            </Typography.Text>
             <Input
               aria-label="结束时间（北京时间）"
               type="datetime-local"
               value={draft.end}
+              status={filterError ? 'error' : undefined}
+              aria-describedby={
+                filterError ? 'audit-time-filter-error' : undefined
+              }
               style={{ width: '100%' }}
-              onChange={(event) => changeDraft({ ...draft, end: event.target.value })}
+              onChange={(event) =>
+                changeDraft({ ...draft, end: event.target.value })
+              }
             />
           </label>
+          {filterError ? (
+            <Typography.Text
+              id="audit-time-filter-error"
+              role="alert"
+              type="danger"
+            >
+              {filterError}
+            </Typography.Text>
+          ) : null}
           <label className={`${styles.filterField} ${styles.eventField}`}>
             <Typography.Text type="secondary">事件类型</Typography.Text>
             <Select
@@ -368,22 +484,95 @@ const AdminAuditEventsPage: React.FC = () => {
               onChange={(eventTypes) => changeDraft({ ...draft, eventTypes })}
             />
           </label>
-          <label className={`${styles.filterField} ${styles.actorField}`}>
-            <Typography.Text type="secondary">
-              操作人 ID <Tooltip title="请输入完整的用户 UUID，共 36 个字符。">ⓘ</Tooltip>
-            </Typography.Text>
-            <Input
-              aria-label="操作人 ID（完整 UUID）"
-              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-              value={draft.actorUserId}
+          <div className={`${styles.filterField} ${styles.actorField}`}>
+            <Typography.Text type="secondary">操作人</Typography.Text>
+            <Select
+              aria-label="按姓名或用户名筛选操作人"
+              showSearch
+              allowClear
+              filterOption={false}
+              placeholder="搜索姓名或用户名"
+              value={selectedActor?.username || undefined}
+              options={actorOptions.map((user) => ({
+                // Ant Design 会生成辅助技术使用的 option 回退列表，选项值使用用户名而非内部 ID。
+                value: user.username,
+                label: user.displayName
+                  ? `${user.displayName}（@${user.username}）`
+                  : `@${user.username}`,
+              }))}
+              loading={actorUsersLoading}
               style={{ width: '100%' }}
-              onChange={(event) => changeDraft({ ...draft, actorUserId: event.target.value })}
+              onSearch={(value) => {
+                actorRequestSequence.current += 1;
+                actorLoading.current = false;
+                setActorSearchText(value);
+                setActorUsers([]);
+                setActorUsersTotal(0);
+                setActorLoadError('');
+              }}
+              onChange={(value) => {
+                setSelectedActor(
+                  actorOptions.find((user) => user.username === value),
+                );
+                changeDraft({
+                  ...draft,
+                  actorUserId:
+                    actorOptions.find((user) => user.username === value)?.id ||
+                    '',
+                });
+                setActorSearchText('');
+              }}
+              onPopupScroll={(event) => {
+                const element = event.target as HTMLDivElement;
+                if (
+                  element.scrollTop + element.clientHeight >=
+                    element.scrollHeight - 24 &&
+                  actorUsers.length < actorUsersTotal &&
+                  !actorUsersLoading
+                ) {
+                  void loadActorUsers(
+                    actorSearchText,
+                    actorUsersPage + 1,
+                    true,
+                  );
+                }
+              }}
+              notFoundContent={
+                actorUsersLoading
+                  ? '正在查找账号…'
+                  : actorSearchText.trim()
+                  ? '未找到匹配账号'
+                  : '暂无用户账号'
+              }
             />
-          </label>
+          </div>
+          {actorLoadError ? (
+            <Alert
+              type="error"
+              showIcon
+              message="用户列表加载失败"
+              description={actorLoadError}
+              action={
+                <Button
+                  disabled={actorUsersLoading}
+                  onClick={() => void loadActorUsers(actorSearchText, 0, false)}
+                >
+                  重试
+                </Button>
+              }
+              style={{ marginTop: 8 }}
+            />
+          ) : null}
           <Space wrap>
-            <Button type="primary" loading={loading} onClick={query}>查询</Button>
-            <Button disabled={loading} onClick={reset}>重置</Button>
-            <Button disabled={loading || filtersDirty} onClick={refreshCurrent}>刷新</Button>
+            <Button type="primary" loading={loading} onClick={query}>
+              查询
+            </Button>
+            <Button disabled={loading} onClick={reset}>
+              重置
+            </Button>
+            <Button disabled={loading || filtersDirty} onClick={refreshCurrent}>
+              刷新
+            </Button>
           </Space>
         </Space>
       </FilterBar>
@@ -393,9 +582,17 @@ const AdminAuditEventsPage: React.FC = () => {
           style={{ marginBottom: 16 }}
           type="error"
           showIcon
-          message={rows.length ? '审计记录未更新，仍显示上次读取的数据。' : '审计记录读取失败'}
+          message={
+            rows.length
+              ? '审计记录未更新，仍显示上次读取的数据。'
+              : '审计记录读取失败'
+          }
           description={loadError}
-          action={<Button disabled={loading} onClick={refreshCurrent}>重试</Button>}
+          action={
+            <Button disabled={loading} onClick={refreshCurrent}>
+              重试
+            </Button>
+          }
         />
       ) : null}
       {showTable ? (
@@ -407,11 +604,13 @@ const AdminAuditEventsPage: React.FC = () => {
           locale={{
             emptyText: (
               <Empty
-                description={loadError
-                  ? '列表读取失败'
-                  : hasFilters(appliedFilters)
-                  ? '筛选条件下没有审计记录'
-                  : '暂无安全审计记录'}
+                description={
+                  loadError
+                    ? '列表读取失败'
+                    : hasFilters(appliedFilters)
+                    ? '筛选条件下没有审计记录'
+                    : '暂无安全审计记录'
+                }
               />
             ),
           }}
@@ -437,7 +636,9 @@ const AdminAuditEventsPage: React.FC = () => {
 
       {cursorStack.length > 1 ? (
         <div className={styles.viewLatest}>
-          <Button disabled={loading || filtersDirty} onClick={viewLatest}>查看最新</Button>
+          <Button disabled={loading || filtersDirty} onClick={viewLatest}>
+            查看最新
+          </Button>
         </div>
       ) : null}
 
@@ -464,10 +665,12 @@ const AdminAuditEventsPage: React.FC = () => {
                 {formatAdminDateTime(selectedEvent.createdAt)}
               </Descriptions.Item>
               <Descriptions.Item label="事件类型">
-                <Typography.Text code>{selectedEvent.eventType}</Typography.Text>
+                <Typography.Text code>
+                  {selectedEvent.eventType}
+                </Typography.Text>
               </Descriptions.Item>
               <Descriptions.Item label="操作身份">
-                {selectedEvent.actorUserId || '未记录身份'}
+                {presentAuditActor(selectedEvent)}
               </Descriptions.Item>
               <Descriptions.Item label="对象摘要">
                 {detailPresentation?.object || '—'}
@@ -475,29 +678,51 @@ const AdminAuditEventsPage: React.FC = () => {
               <Descriptions.Item label="结果">
                 {detailPresentation?.result || '未标注'}
               </Descriptions.Item>
-              <Descriptions.Item label="事件编号">{selectedEvent.id}</Descriptions.Item>
+              <Descriptions.Item label="事件编号">
+                {selectedEvent.id}
+              </Descriptions.Item>
               {requestId ? (
                 <Descriptions.Item label="Request ID">
                   <Typography.Text code>{requestId}</Typography.Text>
                 </Descriptions.Item>
               ) : null}
-              {endpoint ? <Descriptions.Item label="请求位置">{endpoint}</Descriptions.Item> : null}
-              {status ? <Descriptions.Item label="HTTP 状态">{status}</Descriptions.Item> : null}
+              {endpoint ? (
+                <Descriptions.Item label="请求位置">
+                  {endpoint}
+                </Descriptions.Item>
+              ) : null}
+              {status ? (
+                <Descriptions.Item label="HTTP 状态">
+                  {status}
+                </Descriptions.Item>
+              ) : null}
               {stringDetail(details, 'peer') ? (
-                <Descriptions.Item label="来源地址">{stringDetail(details, 'peer')}</Descriptions.Item>
+                <Descriptions.Item label="来源地址">
+                  {stringDetail(details, 'peer')}
+                </Descriptions.Item>
               ) : null}
             </Descriptions>
             <Collapse
               style={{ marginTop: 16 }}
-              items={[{
-                key: 'technical-details',
-                label: '技术详情（JSON）',
-                children: (
-                  <pre style={{ margin: 0, maxHeight: '45vh', overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                    {JSON.stringify(details, null, 2)}
-                  </pre>
-                ),
-              }]}
+              items={[
+                {
+                  key: 'technical-details',
+                  label: '技术详情（JSON）',
+                  children: (
+                    <pre
+                      style={{
+                        margin: 0,
+                        maxHeight: '45vh',
+                        overflow: 'auto',
+                        whiteSpace: 'pre-wrap',
+                        overflowWrap: 'anywhere',
+                      }}
+                    >
+                      {JSON.stringify(details, null, 2)}
+                    </pre>
+                  ),
+                },
+              ]}
             />
           </>
         ) : null}

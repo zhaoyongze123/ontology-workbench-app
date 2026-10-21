@@ -5,6 +5,10 @@ import {
   ADMIN_TIME_ZONE_LABEL,
   formatAdminDateTime,
 } from '@/features/admin/dateTime';
+import {
+  OAUTH_SCOPE_OPTIONS as SCOPE_OPTIONS,
+  oauthScopeLabel,
+} from '@/features/admin/oauthScopePresentation';
 import OneTimeValuesModal from '@/features/admin/OneTimeValuesModal';
 import {
   createOAuthClient,
@@ -16,6 +20,7 @@ import {
 import { useAdminRequestError } from '@/features/admin/useAdminRequestError';
 import { useCurrentUser } from '@/features/auth/context';
 import { normalizeApiError } from '@/features/errors/apiError';
+import ListPagination from '@/features/lists/ListPagination';
 import { ApiOutlined, CopyOutlined } from '@ant-design/icons';
 import {
   Alert,
@@ -36,18 +41,6 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import ListPagination from '@/features/lists/ListPagination';
-
-const SCOPE_OPTIONS = [
-  { value: 'profile', label: '基本身份', description: 'profile' },
-  { value: 'ontology.read', label: '图谱读取', description: 'ontology.read' },
-  { value: 'ontology.write', label: '图谱修改', description: 'ontology.write' },
-  {
-    value: 'ontology.manage',
-    label: '项目与成员管理',
-    description: 'ontology.manage',
-  },
-];
 
 type CreateClientFields = {
   displayName: string;
@@ -402,12 +395,7 @@ const AdminOAuthClientsPage: React.FC = () => {
       render: (scopes: string[]) => (
         <Space wrap size={[4, 4]}>
           {scopes.map((scope) => {
-            const known = SCOPE_OPTIONS.find((item) => item.value === scope);
-            return (
-              <Tag key={scope}>
-                {known ? known.label : `其他权限（${scope}）`}
-              </Tag>
-            );
+            return <Tag key={scope}>{oauthScopeLabel(scope)}</Tag>;
           })}
         </Space>
       ),
@@ -524,7 +512,9 @@ const AdminOAuthClientsPage: React.FC = () => {
           columns={columns}
           dataSource={pageRows}
           loading={loading}
-          locale={{ emptyText: loadError ? '列表读取失败' : '暂无 OAuth 客户端' }}
+          locale={{
+            emptyText: loadError ? '列表读取失败' : '暂无 OAuth 客户端',
+          }}
           scroll={{ x: 1240 }}
           pagination={false}
         />
@@ -831,16 +821,7 @@ const AdminOAuthClientsPage: React.FC = () => {
               <Descriptions.Item label="允许申请的权限">
                 <Space wrap>
                   {detail.scopes.map((scope) => {
-                    const known = SCOPE_OPTIONS.find(
-                      (item) => item.value === scope,
-                    );
-                    return (
-                      <Tag key={scope}>
-                        {known
-                          ? `${known.label}（${scope}）`
-                          : `其他权限（${scope}）`}
-                      </Tag>
-                    );
+                    return <Tag key={scope}>{oauthScopeLabel(scope)}</Tag>;
                   })}
                 </Space>
               </Descriptions.Item>

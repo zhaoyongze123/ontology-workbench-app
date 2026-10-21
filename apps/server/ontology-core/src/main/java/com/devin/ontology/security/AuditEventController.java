@@ -39,6 +39,7 @@ public class AuditEventController {
 
     /** 保持既有数组响应字段不变，筛选仅扩展请求参数。 */
     public record AuditEventView(long id, String eventType, String actorUserId,
+            String actorDisplayName, String actorUsername, String objectDisplayName,
             com.fasterxml.jackson.databind.JsonNode details, java.time.Instant createdAt) {
     }
 }

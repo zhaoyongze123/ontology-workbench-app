@@ -157,7 +157,6 @@ const NodeDrawer: React.FC<{
   useEffect(() => {
     if (nodeInfo) {
       form.setFieldsValue({
-        id: nodeInfo.id ?? '',
         name: nodeInfo.name ?? '',
         description: nodeInfo.description ?? '',
         labels: labels,
@@ -281,7 +280,8 @@ const NodeDrawer: React.FC<{
 
     modal.confirm({
       title: '确认删除',
-      content: '确定要删除该节点吗？此操作不可恢复。',
+      content:
+        '将删除当前节点。若它仍有关联关系，系统会拒绝删除；请先单独删除这些关系。删除后不可恢复。',
       okText: '确认',
       cancelText: '取消',
       onOk: async () => {
@@ -320,7 +320,7 @@ const NodeDrawer: React.FC<{
     <Card
       title={
         <Space>
-          <span>Node properties</span>
+          <span>节点属性</span>
           {graphType && (
             <Tag color={graphType === 'ONTOLOGY' ? 'blue' : 'green'}>
               {graphType === 'ONTOLOGY' ? '本体' : '实体'}
@@ -330,7 +330,14 @@ const NodeDrawer: React.FC<{
       }
       size="small"
       className={styles.card}
-      extra={<Button type="text" icon={<CloseOutlined />} onClick={onClose} />}
+      extra={
+        <Button
+          type="text"
+          aria-label="关闭节点属性"
+          icon={<CloseOutlined aria-hidden="true" />}
+          onClick={onClose}
+        />
+      }
     >
       <Spin spinning={loading}>
         <Form
@@ -348,15 +355,12 @@ const NodeDrawer: React.FC<{
               ))}
             </Space>
           </Form.Item>
-          <Form.Item name="id" label="id" style={{ fontWeight: 'bold' }}>
-            <Input size="small" disabled />
-          </Form.Item>
-          <Form.Item name="name" label="name" style={{ fontWeight: 'bold' }}>
+          <Form.Item name="name" label="名称" style={{ fontWeight: 'bold' }}>
             <Input size="small" disabled={graphType === 'ONTOLOGY'} />
           </Form.Item>
           <Form.Item
             name="description"
-            label="description"
+            label="描述"
             style={{ fontWeight: 'bold' }}
           >
             <Input.TextArea
@@ -367,10 +371,23 @@ const NodeDrawer: React.FC<{
             />
           </Form.Item>
 
+          {/* 系统标识只保存在表单数据中，不要求用户查看或编辑。 */}
+          {Object.prototype.hasOwnProperty.call(properties, 'id') ? (
+            <Form.Item name={['properties', 'id']} hidden>
+              <Input />
+            </Form.Item>
+          ) : null}
+          {Object.prototype.hasOwnProperty.call(properties, '_id') ? (
+            <Form.Item name={['properties', '_id']} hidden>
+              <Input />
+            </Form.Item>
+          ) : null}
           {/* 动态渲染属性字段 */}
           {graphType === 'ENTITY' &&
             propertyFields
-              .filter((key) => key !== 'name' && key !== 'description')
+              .filter(
+                (key) => !['name', 'description', 'id', '_id'].includes(key),
+              )
               .map((key) => {
                 const config = getPropertyFieldConfig(key);
                 const schemaItem = propertySchemaMap[key];
@@ -397,8 +414,8 @@ const NodeDrawer: React.FC<{
                         size="small"
                         disabled={config.disabled || readonly}
                         options={[
-                          { label: 'true', value: true },
-                          { label: 'false', value: false },
+                          { label: '是', value: true },
+                          { label: '否', value: false },
                         ]}
                       />
                     ) : (
@@ -538,27 +555,28 @@ const NodeDrawer: React.FC<{
           )}
         </Form>
       </Spin>
-      <div className={styles.footer}>
-        <Space>
-          <Button
-            danger
-            size="small"
-            onClick={handleDelete}
-            loading={deleteLoading}
-          >
-            删除
-          </Button>
-          <Button
-            type="primary"
-            size="small"
-            onClick={handleSave}
-            loading={saveLoading}
-            disabled={readonly}
-          >
-            保存
-          </Button>
-        </Space>
-      </div>
+      {!readonly ? (
+        <div className={styles.footer}>
+          <Space>
+            <Button
+              danger
+              size="small"
+              onClick={handleDelete}
+              loading={deleteLoading}
+            >
+              删除
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              onClick={handleSave}
+              loading={saveLoading}
+            >
+              保存
+            </Button>
+          </Space>
+        </div>
+      ) : null}
     </Card>
   );
 };

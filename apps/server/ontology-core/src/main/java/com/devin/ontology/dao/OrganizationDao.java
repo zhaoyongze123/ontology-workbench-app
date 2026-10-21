@@ -90,14 +90,17 @@ public class OrganizationDao extends ServiceImpl<OrganizationMapper, Organizatio
         boolean hasKeyword = keyword != null && !keyword.isBlank();
         String scope = systemAdmin ? "1 = 1" : "EXISTS (SELECT 1 FROM ontology.og_project_member m "
                 + "WHERE m.project_id = p.id AND m.user_id = ?)";
-        String filter = scope + (hasKeyword ? " AND p.name ILIKE ?" : "");
+        String filter = scope + (hasKeyword
+                ? " AND (p.name ILIKE ? ESCAPE E'\\\\' OR p.id::text = ?)"
+                : "");
         String fromWhere = " FROM ontology.og_organization p WHERE " + filter;
         Object[] scopeArgs = systemAdmin ? new Object[0] : new Object[]{userId};
         Object[] queryArgs;
         if (hasKeyword) {
-            queryArgs = new Object[scopeArgs.length + 1];
+            queryArgs = new Object[scopeArgs.length + 2];
             System.arraycopy(scopeArgs, 0, queryArgs, 0, scopeArgs.length);
-            queryArgs[queryArgs.length - 1] = "%" + keyword.trim() + "%";
+            queryArgs[scopeArgs.length] = "%" + escapeLike(keyword.trim()) + "%";
+            queryArgs[scopeArgs.length + 1] = keyword.trim();
         } else {
             queryArgs = scopeArgs;
         }
@@ -122,5 +125,10 @@ public class OrganizationDao extends ServiceImpl<OrganizationMapper, Organizatio
         Page<Organization> page = new Page<>(pageNum, pageSize, total == null ? 0 : total);
         page.setRecords(rows);
         return page;
+    }
+
+    /** 搜索文本按字面匹配，用户输入中的 %、_ 不会意外扩大结果集。 */
+    private static String escapeLike(final String value) {
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 }

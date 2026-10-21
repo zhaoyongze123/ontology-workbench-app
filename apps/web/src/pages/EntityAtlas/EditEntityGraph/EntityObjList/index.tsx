@@ -1,10 +1,10 @@
 import BatchActionBtn from '@/components/BatchActionBtn';
 import TabsPageTop from '@/components/TableAction';
+import ListPagination from '@/features/lists/ListPagination';
 import { getLinkOntologyNodeList } from '@/services_v1/graphService';
 import { deleteNode, pageNode } from '@/services_v1/nodeService';
 import { ApiResultListNodeVO, NodeVO } from '@/services_v1/typings';
 import { useRequest } from '@umijs/max';
-import ListPagination from '@/features/lists/ListPagination';
 import {
   Alert,
   App,
@@ -225,7 +225,7 @@ const EntityObjList = forwardRef<
   /** 删除实体对象 */
   function handleDelEntity(record: NodeVO) {
     if (!record.id) {
-      message.warning('实体对象ID不存在，无法删除');
+      message.warning('无法识别此实体对象，请刷新列表后重试。');
       return;
     }
     const nodeId = record.id;
@@ -248,7 +248,7 @@ const EntityObjList = forwardRef<
     }
     const idList = keys.filter((key): key is string => typeof key === 'string');
     if (idList.length !== keys.length) {
-      message.error('选中的实体对象ID格式不正确');
+      message.error('所选实体对象信息无效，请刷新列表后重试。');
       return;
     }
     modal.confirm({
@@ -382,8 +382,22 @@ const EntityObjList = forwardRef<
       width: 100,
       render: (_: any, record: NodeVO) => (
         <Space size="middle">
-          <Link aria-disabled={readonly} onClick={() => { if (!readonly) handleEditEntity(record); }}>编辑</Link>
-          <Link aria-disabled={readonly} onClick={() => { if (!readonly) handleDelEntity(record); }}>删除</Link>
+          <Link
+            aria-disabled={readonly}
+            onClick={() => {
+              if (!readonly) handleEditEntity(record);
+            }}
+          >
+            编辑
+          </Link>
+          <Link
+            aria-disabled={readonly}
+            onClick={() => {
+              if (!readonly) handleDelEntity(record);
+            }}
+          >
+            删除
+          </Link>
         </Space>
       ),
     },
@@ -418,7 +432,9 @@ const EntityObjList = forwardRef<
             type="error"
             showIcon
             message="实体对象列表读取失败"
-            action={<Button onClick={() => void refreshEntityData()}>重试</Button>}
+            action={
+              <Button onClick={() => void refreshEntityData()}>重试</Button>
+            }
           />
         ) : null}
         <Table
@@ -429,14 +445,20 @@ const EntityObjList = forwardRef<
             ...item,
           }))}
           rowKey={(record: NodeVO) => record.id as string}
-          rowSelection={readonly ? undefined : {
-            type: 'checkbox',
-            columnWidth: 30,
-            ...rowSelection,
-          }}
+          rowSelection={
+            readonly
+              ? undefined
+              : {
+                  type: 'checkbox',
+                  columnWidth: 30,
+                  ...rowSelection,
+                }
+          }
           pagination={false}
           scroll={{ y: 'calc(100vh - 292px)' }}
-          locale={{ emptyText: entityTableError ? '列表读取失败' : '暂无实体对象' }}
+          locale={{
+            emptyText: entityTableError ? '列表读取失败' : '暂无实体对象',
+          }}
           onChange={(_, filters) => handleEntityFilterChange(filters)}
         />
         {!readonly && entityRes?.data?.length > 0 && (

@@ -76,7 +76,49 @@ public class ProjectMembershipService {
         List<ProjectUserOption> rows = jdbc.query("SELECT u.id, u.username, u.display_name" + where
                         + " ORDER BY u.username, u.id LIMIT ? OFFSET ?",
                 (rs, n) -> new ProjectUserOption(rs.getString("id"), rs.getString("username"),
-                        rs.getString("display_name")), pattern, pattern, pageSize, offset(pageNum, pageSize));
+                        rs.getString("display_name"), false), pattern, pattern, pageSize, offset(pageNum, pageSize));
+        return new ProjectPage<>(rows, pageNum, pageSize, total == null ? 0 : total);
+    }
+
+    /**
+     * 按当前项目权限返回邀请候选人；服务端分页，并将待处理邀请标为不可重复发送。
+     * 搜索词为空时返回第一页可选用户，避免要求操作者先猜用户名。
+     */
+    @Transactional(readOnly = true)
+    public ProjectPage<ProjectUserOption> inviteCandidates(final BigInteger projectId, final String query,
+            final int pageNum, final int pageSize) {
+        validatePage(pageNum, pageSize);
+        InternalUser actor = access.currentUser();
+        access.requireProject(projectId, ProjectCapability.MANAGE_MEMBERS);
+        String keyword = query == null ? "" : query.trim();
+        if (keyword.length() > 120) throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
+
+        String scope = " FROM ontology.og_user u WHERE u.enabled = TRUE AND u.id <> ? "
+                + "AND NOT EXISTS (SELECT 1 FROM ontology.og_project_member m "
+                + "WHERE m.project_id = ? AND m.user_id = u.id)";
+        String match = keyword.isEmpty() ? "" : " AND (u.username ILIKE ? ESCAPE E'\\\\' "
+                + "OR u.display_name ILIKE ? ESCAPE E'\\\\')";
+        String where = scope + match;
+        String pattern = keyword.isEmpty() ? null : "%" + escapeLike(keyword) + "%";
+
+        Long total = keyword.isEmpty()
+                ? jdbc.queryForObject("SELECT COUNT(*)" + where, Long.class, actor.id(), projectId)
+                : jdbc.queryForObject("SELECT COUNT(*)" + where, Long.class, actor.id(), projectId, pattern, pattern);
+
+        String select = "SELECT u.id, u.username, u.display_name, EXISTS (SELECT 1 "
+                + "FROM ontology.og_project_invitation i WHERE i.project_id = ? AND i.target_user_id = u.id "
+                + "AND i.status = 'PENDING' AND i.expires_time > NOW()) AS invitation_pending" + where
+                + " ORDER BY invitation_pending, u.display_name, u.username, u.id LIMIT ? OFFSET ?";
+        Object[] args;
+        if (keyword.isEmpty()) {
+            args = new Object[] { projectId, actor.id(), projectId, pageSize, offset(pageNum, pageSize) };
+        } else {
+            args = new Object[] { projectId, actor.id(), projectId, pattern, pattern,
+                    pageSize, offset(pageNum, pageSize) };
+        }
+        List<ProjectUserOption> rows = jdbc.query(select, (rs, n) -> new ProjectUserOption(
+                rs.getString("id"), rs.getString("username"), rs.getString("display_name"),
+                rs.getBoolean("invitation_pending")), args);
         return new ProjectPage<>(rows, pageNum, pageSize, total == null ? 0 : total);
     }
 
@@ -343,6 +385,7 @@ public class ProjectMembershipService {
 
     private static String invitationSelect() {
         return "SELECT i.id, p.name AS project_name, i.inviter_user_id, iu.display_name AS inviter_display, "
+                + "iu.username AS inviter_username, "
                 + "i.target_user_id, tu.display_name AS target_display, i.role, i.status, i.created_time, i.expires_time "
                 + "FROM ontology.og_project_invitation i JOIN ontology.og_organization p ON p.id = i.project_id "
                 + "LEFT JOIN ontology.og_user iu ON iu.id = i.inviter_user_id "
@@ -352,7 +395,8 @@ public class ProjectMembershipService {
     private static ProjectInvitationView mapInvitation(final java.sql.ResultSet rs, final int rowNum)
             throws java.sql.SQLException {
         return new ProjectInvitationView(rs.getObject("id", UUID.class), rs.getString("project_name"),
-                rs.getString("inviter_user_id"), rs.getString("inviter_display"), rs.getString("target_user_id"),
+                rs.getString("inviter_user_id"), rs.getString("inviter_display"), rs.getString("inviter_username"),
+                rs.getString("target_user_id"),
                 rs.getString("target_display"), ProjectRole.valueOf(rs.getString("role")), rs.getString("status"),
                 rs.getTimestamp("created_time").toInstant(), rs.getTimestamp("expires_time").toInstant());
     }

@@ -32,8 +32,9 @@ public class AccountLifecycleController {
 
     @GetMapping(path = "/admin/users", produces = MediaType.APPLICATION_JSON_VALUE)
     public AccountPage users(@RequestParam(defaultValue = "0") final int page,
-            @RequestParam(defaultValue = "20") final int size) {
-        return accounts.listUsers(page, size);
+            @RequestParam(defaultValue = "20") final int size,
+            @RequestParam(required = false) final String keyword) {
+        return accounts.listUsers(page, size, keyword);
     }
 
     @PostMapping(path = "/admin/users", consumes = MediaType.APPLICATION_JSON_VALUE,

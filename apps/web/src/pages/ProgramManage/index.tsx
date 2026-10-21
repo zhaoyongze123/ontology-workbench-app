@@ -1,26 +1,23 @@
+import { normalizeApiError } from '@/features/errors/apiError';
+import PageShell from '@/features/layout/PageShell';
+import ListPagination from '@/features/lists/ListPagination';
+import ProjectRowActions from '@/features/projects/ProjectRowActions';
 import {
   deleteOrganization,
   editOrganization,
   organizationPage,
   saveOrganization,
 } from '@/services_v1/organizationService';
-import ProjectRowActions from '@/features/projects/ProjectRowActions';
 import {
   ApiResultListOrganizationVO,
   OrganizationVO,
 } from '@/services_v1/typings';
-import {
-  PlusOutlined,
-  ProjectOutlined,
-} from '@ant-design/icons';
+import { PlusOutlined, ProjectOutlined } from '@ant-design/icons';
 import { history, Link, useRequest } from '@umijs/max';
-import { Alert, App, Button, Row, Space, Table, Typography } from 'antd';
+import { Alert, App, Button, Table } from 'antd';
 import { useState } from 'react';
 import styles from './index.less';
 import ProgramPop from './ProgramPop';
-import { normalizeApiError } from '@/features/errors/apiError';
-import PageShell from '@/features/layout/PageShell';
-import ListPagination from '@/features/lists/ListPagination';
 
 function ProgramManage() {
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -241,9 +238,12 @@ function ProgramManage() {
       key: 'action',
       width: 360,
       render: (_: any, record: OrganizationVO) => (
-        <ProjectRowActions projectId={record.id as string}
-          onEdit={() => handleEdit(record)} onDelete={() => handleDelete(record)}
-          onLeave={refreshProgramList} />
+        <ProjectRowActions
+          projectId={record.id as string}
+          onEdit={() => handleEdit(record)}
+          onDelete={() => handleDelete(record)}
+          onLeave={refreshProgramList}
+        />
       ),
     },
   ];
@@ -270,7 +270,9 @@ function ProgramManage() {
             type="error"
             showIcon
             message="项目列表读取失败"
-            action={<Button onClick={() => void refreshProgramList()}>重试</Button>}
+            action={
+              <Button onClick={() => void refreshProgramList()}>重试</Button>
+            }
           />
         ) : null}
         <Table

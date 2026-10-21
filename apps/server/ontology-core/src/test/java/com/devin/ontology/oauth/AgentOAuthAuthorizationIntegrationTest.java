@@ -439,20 +439,16 @@ class AgentOAuthAuthorizationIntegrationTest {
         assertThat(login.statusCode()).isEqualTo(200);
 
         String runId = UUID.randomUUID().toString();
-        java.time.OffsetDateTime now = java.time.OffsetDateTime.now(java.time.ZoneOffset.ofHours(8));
-        java.time.LocalDateTime olderTime = now.minusHours(3).toLocalDateTime();
-        java.time.LocalDateTime newerTime = now.minusHours(2).toLocalDateTime();
+        java.time.OffsetDateTime now = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
         java.time.OffsetDateTime start = now.minusDays(1);
         java.time.OffsetDateTime end = now.minusHours(1);
         // 审计表是 append-only；用唯一用户与 runId 隔离测试记录，由一次性集成库在测试后整体销毁。
         jdbc.update("INSERT INTO ontology.og_audit_event (event_type, actor_user_id, details_json, create_time) "
-                        + "VALUES ('AUDIT_FILTER_MATCH', ?, CAST(? AS jsonb), ?)",
-                userId, "{\"testRunId\":\"" + runId + "\",\"sequence\":\"older\"}",
-                java.sql.Timestamp.valueOf(olderTime));
+                        + "VALUES ('AUDIT_FILTER_MATCH', ?, CAST(? AS jsonb), NOW() - INTERVAL '3 hours')",
+                userId, "{\"testRunId\":\"" + runId + "\",\"sequence\":\"older\"}");
         jdbc.update("INSERT INTO ontology.og_audit_event (event_type, actor_user_id, details_json, create_time) "
-                        + "VALUES ('AUDIT_FILTER_MATCH', ?, CAST(? AS jsonb), ?)",
-                userId, "{\"testRunId\":\"" + runId + "\",\"sequence\":\"newer\"}",
-                java.sql.Timestamp.valueOf(newerTime));
+                        + "VALUES ('AUDIT_FILTER_MATCH', ?, CAST(? AS jsonb), NOW() - INTERVAL '2 hours')",
+                userId, "{\"testRunId\":\"" + runId + "\",\"sequence\":\"newer\"}");
         // 最新记录故意不匹配筛选；limit=1 仍应先找到较早的匹配记录。
         for (int i = 0; i < 5; i++) {
             jdbc.update("INSERT INTO ontology.og_audit_event (event_type, actor_user_id, details_json) "
@@ -469,6 +465,8 @@ class AgentOAuthAuthorizationIntegrationTest {
         assertThat(firstRows.isArray()).isTrue();
         assertThat(firstRows).hasSize(1);
         assertThat(firstRows.get(0).path("details").path("sequence").asText()).isEqualTo("newer");
+        assertThat(firstRows.get(0).path("actorDisplayName").asText()).isEqualTo("OAuth integration admin");
+        assertThat(firstRows.get(0).path("actorUsername").asText()).isEqualTo(username);
 
         long cursor = firstRows.get(0).path("id").asLong();
         HttpResponse<String> second = get("/admin/audit-events?" + filters + "&beforeId=" + cursor);

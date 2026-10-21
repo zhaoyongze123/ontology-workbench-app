@@ -38,13 +38,11 @@ function CypherBoard({
   /** 执行Cypher查询 */
   const { loading, run: runQuery } = useRequest(
     (cypher: string, graphId: string, type: 'ONTOLOGY' | 'ENTITY') =>
-      query(
-        {
-          cypher,
-          graphId,
-          graphType: type,
-        },
-      ),
+      query({
+        cypher,
+        graphId,
+        graphType: type,
+      }),
     {
       manual: true,
       onSuccess: (result) => {
@@ -107,11 +105,11 @@ function CypherBoard({
       return;
     }
     if (!databaseId) {
-      message.error('未获取到图谱ID');
+      message.error('当前图谱不可用，请返回图谱列表后重新打开。');
       return;
     }
     if (!graphType) {
-      message.error('未获取到图谱类型');
+      message.error('无法识别图谱类型，请返回图谱列表后重新打开。');
       return;
     }
     runQuery(cypherQuery.trim(), databaseId, graphType);

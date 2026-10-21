@@ -1,5 +1,6 @@
 import BatchActionBtn from '@/components/BatchActionBtn';
 import TableAction from '@/components/TableAction';
+import ListPagination from '@/features/lists/ListPagination';
 import {
   deleteRelationship,
   pageRelationship,
@@ -10,7 +11,6 @@ import {
   RelationshipVO,
 } from '@/services_v1/typings';
 import { useRequest } from '@umijs/max';
-import ListPagination from '@/features/lists/ListPagination';
 import { Alert, App, Button, Layout, Row, Space, Table, Tooltip } from 'antd';
 import React, { forwardRef, useImperativeHandle, useState } from 'react';
 import OntoRelationModal from '../OntoRelationModal';
@@ -87,7 +87,10 @@ const OntoRelationList = forwardRef<
     : 0;
 
   /** 本体关系表格分页 */
-  const handleRelationPageChange = (nextCurrent: number, nextPageSize: number) => {
+  const handleRelationPageChange = (
+    nextCurrent: number,
+    nextPageSize: number,
+  ) => {
     const currentPage = nextPageSize === pageSize ? nextCurrent : 1;
     setCurrentRelationList(currentPage);
     setPageSize(nextPageSize);
@@ -158,7 +161,7 @@ const OntoRelationList = forwardRef<
   /** 删除单个本体关系 */
   const handleDelRelation = (record: RelationshipVO) => {
     if (!record.id) {
-      message.warning('关系ID不存在，无法删除');
+      message.warning('无法识别此本体关系，请刷新列表后重试。');
       return;
     }
     const relationId = record.id; // 提取 ID，确保类型安全
@@ -181,7 +184,7 @@ const OntoRelationList = forwardRef<
     }
     const idList = keys.filter((key): key is string => typeof key === 'string');
     if (idList.length !== keys.length) {
-      message.error('选中的关系ID格式不正确');
+      message.error('所选本体关系信息无效，请刷新列表后重试。');
       return;
     }
     modal.confirm({
@@ -339,7 +342,9 @@ const OntoRelationList = forwardRef<
             type="error"
             showIcon
             message="本体关系列表读取失败"
-            action={<Button onClick={() => void refreshRelationData()}>重试</Button>}
+            action={
+              <Button onClick={() => void refreshRelationData()}>重试</Button>
+            }
           />
         ) : null}
         <Table
@@ -352,12 +357,18 @@ const OntoRelationList = forwardRef<
           pagination={false}
           scroll={{ y: 'calc(100vh - 292px)' }}
           rowKey={(record: RelationshipVO) => record.id as string}
-          rowSelection={!canMutate ? undefined : {
-            type: 'checkbox',
-            columnWidth: 30,
-            ...rowSelection,
+          rowSelection={
+            !canMutate
+              ? undefined
+              : {
+                  type: 'checkbox',
+                  columnWidth: 30,
+                  ...rowSelection,
+                }
+          }
+          locale={{
+            emptyText: OntoRelationTableError ? '列表读取失败' : '暂无本体关系',
           }}
-          locale={{ emptyText: OntoRelationTableError ? '列表读取失败' : '暂无本体关系' }}
         />
         {canMutate && OntoRelationData?.data?.length > 0 && (
           <Row className={styles.batchActions}>
