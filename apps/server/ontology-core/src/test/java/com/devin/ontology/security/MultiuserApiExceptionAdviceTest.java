@@ -1,6 +1,7 @@
 package com.devin.ontology.security;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -26,11 +27,14 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import java.sql.SQLException;
 
 /** 透过 Spring MVC 请求分派验证状态、内容协商、字段错误和安全消息。 */
 class MultiuserApiExceptionAdviceTest {
     private MockMvc mvc;
+    private com.devin.ontology.identity.AccountLifecycleService accountService;
 
     @BeforeEach
     void setUp() {
@@ -38,7 +42,11 @@ class MultiuserApiExceptionAdviceTest {
         messages.setBasenames("i18n/messages");
         messages.setDefaultEncoding("UTF-8");
         ApiErrorResponseWriter writer = new ApiErrorResponseWriter(new ObjectMapper(), messages);
-        mvc = MockMvcBuilders.standaloneSetup(new ErrorProbeController())
+        accountService = mock(com.devin.ontology.identity.AccountLifecycleService.class);
+        when(accountService.setEnabled("u1", false))
+                .thenThrow(new OntologyApiException(ApiErrorCode.ACCOUNT_LAST_ADMIN));
+        mvc = MockMvcBuilders.standaloneSetup(new ErrorProbeController(),
+                        new com.devin.ontology.identity.AccountLifecycleController(accountService))
                 .setControllerAdvice(new MultiuserApiExceptionAdvice(writer)).build();
     }
 
@@ -69,6 +77,17 @@ class MultiuserApiExceptionAdviceTest {
                 .andExpect(jsonPath("$.code").value(5001))
                 .andExpect(jsonPath("$.message").exists())
                 .andExpect(jsonPath("$.errorCode").doesNotExist());
+    }
+
+    @Test
+    void accountControllerContractKeepsLegacyErrorFieldForJsonClients() throws Exception {
+        mvc.perform(patch("/admin/users/u1/enabled")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":false}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("conflict"))
+                .andExpect(jsonPath("$.success").doesNotExist());
     }
 
     @Test

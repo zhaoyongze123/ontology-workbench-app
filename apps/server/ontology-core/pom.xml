@@ -71,6 +71,34 @@
                     </excludes>
                 </configuration>
             </plugin>
+            <!-- 独立维护进程使用迁移账号执行 DDL，Java 服务的数据源始终只持有运行账号。 -->
+            <plugin>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-maven-plugin</artifactId>
+                <version>${flyway-core.version}</version>
+                <configuration>
+                    <url>${env.ONTOLOGY_MIGRATOR_DB_URL}</url>
+                    <user>${env.ONTOLOGY_MIGRATOR_USER}</user>
+                    <password>${env.ONTOLOGY_MIGRATOR_PASSWORD}</password>
+                    <locations>
+                        <location>filesystem:${project.basedir}/src/main/resources/flyway</location>
+                    </locations>
+                    <schemas>
+                        <schema>ontology</schema>
+                    </schemas>
+                    <defaultSchema>ontology</defaultSchema>
+                    <baselineOnMigrate>false</baselineOnMigrate>
+                    <validateOnMigrate>true</validateOnMigrate>
+                    <cleanDisabled>true</cleanDisabled>
+                </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.postgresql</groupId>
+                        <artifactId>postgresql</artifactId>
+                        <version>${postgresql.version}</version>
+                    </dependency>
+                </dependencies>
+            </plugin>
         </plugins>
     </build>
 

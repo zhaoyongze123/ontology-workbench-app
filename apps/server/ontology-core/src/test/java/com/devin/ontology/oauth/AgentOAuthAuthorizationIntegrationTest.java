@@ -177,6 +177,9 @@ class AgentOAuthAuthorizationIntegrationTest {
                 Map.of("displayName", "OAuth integration probe", "redirectUri", REDIRECT_URI,
                         "scopes", List.of("profile", "ontology.read")));
         assertThat(created.statusCode()).isEqualTo(200);
+        HttpResponse<String> listed = get("/admin/oauth/clients");
+        assertThat(listed.statusCode()).isEqualTo(200);
+        assertThat(listed.body()).contains("OAuth integration probe").doesNotContain("clientSecret");
         JsonNode clientBody = mapper.readTree(created.body());
         String clientId = clientBody.path("clientId").asText();
         String clientSecret = clientBody.path("clientSecret").asText();
@@ -344,15 +347,66 @@ class AgentOAuthAuthorizationIntegrationTest {
         assertThat(replay.statusCode()).isEqualTo(400);
 
         String failedRequestId = replay.headers().firstValue("X-Request-ID").orElseThrow();
-        String auditDetails = jdbc.queryForObject("SELECT details_json::text FROM ontology.og_audit_event "
+        List<String> replayAuditDetails = jdbc.queryForList(
+                "SELECT details_json::text FROM ontology.og_audit_event "
                         + "WHERE event_type = 'SECURITY_OAUTH_PROTOCOL_REJECTED' "
                         + "AND details_json->>'requestId' = ?", String.class, failedRequestId);
+        assertThat(replayAuditDetails).hasSize(1);
+        String auditDetails = replayAuditDetails.get(0);
         assertThat(auditDetails).contains(failedRequestId, "/oidc/app/token", "400")
                 .doesNotContain(clientSecret, authorizationCode, verifier, accessToken);
 
         HttpResponse<String> auditPage = get("/admin/audit-events?limit=20");
         assertThat(auditPage.statusCode()).isEqualTo(200);
         assertThat(auditPage.body()).contains("SECURITY_OAUTH_PROTOCOL_REJECTED", failedRequestId);
+    }
+
+    @Test
+    void disablingManagedClientRevokesItsAgentAccess() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth disable probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile", "ontology.read")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        JsonNode clientBody = mapper.readTree(created.body());
+        String clientId = clientBody.path("clientId").asText();
+        String clientSecret = clientBody.path("clientSecret").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+
+        String accessToken = authorizeAndExchange(client, clientId, clientSecret, "profile ontology.read");
+        assertThat(getBearer(accessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(200);
+
+        // 禁用客户端应同时撤销其既有 Agent 授权，而不只是隐藏管理列表中的记录。
+        csrf = csrfToken();
+        HttpResponse<String> disabled = send(HttpRequest.newBuilder(
+                uri("/admin/oauth/clients/" + clientRecordId)).header("X-CSRF-TOKEN", csrf)
+                .DELETE().build());
+
+        assertThat(disabled.statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT NOT enabled FROM ontology.og_app_client WHERE id = ?",
+                Boolean.class, clientRecordId)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT revoked_at IS NOT NULL AND access_active = FALSE "
+                + "FROM ontology.og_app_authorization WHERE client_record_id = ? AND user_id = ?",
+                Boolean.class, clientRecordId, userId)).isTrue();
+        assertThat(getBearer(accessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+
+        HttpResponse<String> listed = get("/admin/oauth/clients");
+        assertThat(listed.statusCode()).isEqualTo(200);
+        JsonNode listedClients = mapper.readTree(listed.body());
+        JsonNode disabledClient = java.util.stream.StreamSupport.stream(listedClients.spliterator(), false)
+                .filter(item -> clientId.equals(item.path("clientId").asText()))
+                .findFirst().orElseThrow();
+        assertThat(disabledClient.path("enabled").asBoolean()).isFalse();
+        assertThat(listed.body()).doesNotContain("clientSecret");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_audit_event "
+                + "WHERE event_type = 'APP_CLIENT_DISABLED' AND actor_user_id = ? "
+                + "AND details_json->>'clientId' = ?", Long.class, userId, clientId)).isEqualTo(1L);
     }
 
     @Test

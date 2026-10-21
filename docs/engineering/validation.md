@@ -14,18 +14,23 @@ Java 测试中需要实际数据库的用例以环境条件隔离，默认不会
 
 ## PostgreSQL / AGE 集成验证
 
-`MultiuserDatabaseIntegrationTest` 只接受名称为 `ontology_multiuser_dev_20261020` 的隔离测试库。先通过受控迁移和本机 bootstrap 准备副本，并使用非超级用户运行账号，再将以下值放入本机环境，禁止提交：
+`apps/server/ontology-it/run.sh` 每次启动一次性 PostgreSQL/AGE 库，先用临时 DBA 账号准备角色，再通过 Maven Flyway 插件使用 `ontology_migrator` 执行版本迁移，最后收紧 ACL 并以 `ontology_it_runtime` 运行集成测试。脚本退出时销毁数据库临时盘。它不复用本机业务副本凭据。
 
-- `ONTOLOGY_IT_JDBC_URL`：隔离库 JDBC URL，schema 为 ontology。
-- `JDBC_USER`、`JDBC_PASSWORD`：副本运行账号。
+`DatabasePrivilegesIntegrationTest` 在该隔离库验证：认证登录角色是 `NOINHERIT`，连接后有效角色为 `ontology_app_runtime`；运行角色无数据库级 CREATE、Ontology schema CREATE、TEMP、超级用户、建库、建角色或 BYPASSRLS 权限。AGE 动态图权限只作用于单个图 schema，已有及未来标签对象不由登录角色直接拥有，且直接 ACL 不授予登录角色；业务表、审计表、bootstrap ledger、Flyway 历史、序列和函数权限与 allowlist 一致。迁移窗口结束后迁移账号不再能切换到维护角色，仍可在自己拥有的 `ontology` schema 中创建未来表/序列，而新函数不会默认对 PUBLIC 开放；AGE 任意建删函数对运行账号不可执行，Ontology 图建删仍可通过受限包装层工作。OAuth 集成测试还验证客户端列表可读取且返回不含 `clientSecret`。`BootstrapDatabaseIntegrationTest` 使用独立 bootstrap 登录身份实际执行并重复核验初始化，再回滚种子数据；同时验证该角色没有数据库或 schema 创建权，只能读取冲突检测需要的列、插入必要身份/项目/成员/审计及 `og_bootstrap_run`，运行身份仍无法访问 ledger。
+
+单独运行数据库测试：
+
+- 使用仓库中的隔离库脚本：
 
 ```sh
-mvn -f apps/server/pom.xml -pl ontology-core -am \
-  -Dtest=MultiuserDatabaseIntegrationTest \
-  -Dsurefire.failIfNoSpecifiedTests=false test
+bash apps/server/ontology-it/run.sh
 ```
 
-用例覆盖 MyBatis 项目记录与 AGE 图写入共同回滚，以及引号、反斜杠、换行、中文和美元符号的原样写入读回。通过回滚撤销测试新建对象，不删除原有图谱。
+定位权限测试时可设置 `ONTOLOGY_IT_TESTS=DatabasePrivilegesIntegrationTest,BootstrapDatabaseIntegrationTest` 只跑数据库和 bootstrap 权限边界用例；默认仍运行全部 PostgreSQL/AGE 集成用例。
+
+用例也覆盖 OAuth 客户端管理列表、创建、禁用及禁用后的 Token 撤销，并覆盖授权、刷新和撤销；此外验证 MyBatis 项目记录与 AGE 图写入共同回滚。图谱回滚用例使用新的随机 ID，不删除原有图谱。
+
+本机现有隔离副本升级前先做 PostgreSQL/AGE 完整备份；数据库管理员运行 `deploy/local/prepare-db-roles.sql`，然后仅在维护进程环境中设置 `ONTOLOGY_MIGRATOR_DB_URL`、`ONTOLOGY_MIGRATOR_USER=ontology_migrator`、`ONTOLOGY_MIGRATOR_PASSWORD` 并执行 `mvn -f apps/server/ontology-core/pom.xml flyway:migrate`（它会先校验迁移）。成功后可单独运行 `flyway:validate` 确认已同步。迁移完成后由管理员运行 `deploy/local/finalize-db-permissions.sql`，撤销迁移账号的临时 owner 成员资格，再以普通运行账号启动 Java 并执行接口验证。迁移 Secret 不通过 `-D` 命令行参数传入，也不进入 Java 运行配置。
 
 浏览器验收须检查登录、不同角色、过期/退出、错误状态和窄屏布局。实际检查过的状态与证据应在实施记录中注明，不能以 TypeScript 或打包成功代替浏览器检查。
 

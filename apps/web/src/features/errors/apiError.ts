@@ -159,10 +159,13 @@ export function normalizeApiError(input: unknown): AppError {
   let message = safeServerMessage(data.detail, data.message, data.errorMessage, info.errorMessage,
     infoData.detail, infoData.message, infoData.errorMessage);
   if (!message && kind === 'cancelled') message = '请求已取消。';
-  if (!message && kind === 'timeout') message = '请求超时，请稍后重试。';
-  if (!message && status === undefined && isWriteMethod(record(error.config).method)) {
+  // 写请求超时可能已经在服务端提交；优先提示核对结果，避免误导用户直接重放。
+  const writeOutcomeUnknown = status === undefined && isWriteMethod(record(error.config).method)
+    && (kind === 'network' || kind === 'timeout');
+  if (!message && writeOutcomeUnknown) {
     message = '提交结果暂未确认，请先核对当前状态后再重试。';
   }
+  if (!message && kind === 'timeout') message = '请求超时，请稍后重试。';
   message ||= error.name === 'BizError'
     ? '操作未能完成，请检查输入后重试。'
     : fallback(status, legacyError);
@@ -177,7 +180,6 @@ export function normalizeApiError(input: unknown): AppError {
     requestId,
     fieldErrors: fields,
     retryAfterSeconds: retryAfterSeconds(headers),
-    writeOutcomeUnknown: status === undefined && isWriteMethod(record(error.config).method)
-      && (kind === 'network' || kind === 'timeout'),
+    writeOutcomeUnknown,
   });
 }

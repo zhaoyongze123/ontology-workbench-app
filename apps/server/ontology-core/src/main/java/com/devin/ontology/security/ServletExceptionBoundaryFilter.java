@@ -26,9 +26,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public final class ServletExceptionBoundaryFilter extends OncePerRequestFilter {
     private final ApiErrorResponseWriter errorWriter;
+    private final OAuthProtocolErrorWriter oauthErrorWriter;
 
-    public ServletExceptionBoundaryFilter(final ApiErrorResponseWriter errorWriter) {
+    public ServletExceptionBoundaryFilter(final ApiErrorResponseWriter errorWriter,
+            final OAuthProtocolErrorWriter oauthErrorWriter) {
         this.errorWriter = errorWriter;
+        this.oauthErrorWriter = oauthErrorWriter;
     }
 
     @Override
@@ -47,9 +50,13 @@ public final class ServletExceptionBoundaryFilter extends OncePerRequestFilter {
                 // 任何异常都不能保留下游已写的敏感正文或不匹配的 Content-Length。
                 try {
                     response.reset();
-                    errorWriter.write(request, response, HttpStatus.INTERNAL_SERVER_ERROR,
-                            ApiErrorCode.INTERNAL_ERROR, LegacyErrorAdapter.Shape.ERROR_FIELD,
-                            "request_unavailable", null);
+                    if (oauthErrorWriter.owns(request)) {
+                        oauthErrorWriter.writeServerError(request, response);
+                    } else {
+                        errorWriter.write(request, response, HttpStatus.INTERNAL_SERVER_ERROR,
+                                ApiErrorCode.INTERNAL_ERROR, LegacyErrorAdapter.Shape.ERROR_FIELD,
+                                "request_unavailable", null);
+                    }
                 } catch (IOException | RuntimeException writeFailure) {
                     // 客户端断开时响应无法补写；不以第二个异常覆盖首个固定故障记录。
                 }

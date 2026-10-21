@@ -91,6 +91,22 @@ test('reports an unresolved write outcome after a network failure', () => {
   assert.match(error.message, /结果暂未确认/);
 });
 
+test('prioritizes unresolved write outcome over generic timeout retry wording', () => {
+  const writeError = normalizeApiError({
+    name: 'Error',
+    code: 'ETIMEDOUT',
+    config: { method: 'POST' },
+  });
+  assert.equal(writeError.kind, 'timeout');
+  assert.equal(writeError.writeOutcomeUnknown, true);
+  assert.match(writeError.message, /结果暂未确认/);
+  assert.doesNotMatch(writeError.message, /请求超时/);
+
+  const readError = normalizeApiError({ name: 'TimeoutError', config: { method: 'GET' } });
+  assert.equal(readError.writeOutcomeUnknown, false);
+  assert.equal(readError.message, '请求超时，请稍后重试。');
+});
+
 test('does not present a cancelled request as a network failure', () => {
   const error = normalizeApiError({ name: 'CanceledError', code: 'ERR_CANCELED' });
 

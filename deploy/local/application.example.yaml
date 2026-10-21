@@ -9,7 +9,7 @@ spring:
     password: ${ONTOLOGY_DB_PASSWORD}
   flyway:
     enabled: false
-    # 迁移使用维护账号受控执行；日常运行账号不修改数据库结构。
+    # 迁移由独立 Maven Flyway 进程使用 ontology_migrator 执行；Java 进程永远只拿运行账号。
 graph:
   database:
     type: age

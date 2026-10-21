@@ -8,6 +8,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.devin.ontology.common.exception.ApiErrorResponseWriter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.ServletException;
+import org.springframework.http.HttpHeaders;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
@@ -57,6 +58,27 @@ class ServletExceptionBoundaryFilterTest {
         assertThat(response.getStatus()).isEqualTo(500);
         assertThat(response.getContentAsString()).doesNotContain(SECRET);
         assertNoSecretInLogs();
+    }
+
+    @Test
+    void oauthTokenEndpointKeepsNativeErrorShapeRegardlessOfAcceptHeader() throws Exception {
+        ServletExceptionBoundaryFilter filter = filter();
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/oidc/app/token");
+        request.setContextPath("/api/v1");
+        request.setServletPath("/oidc/app/token");
+        request.addHeader(HttpHeaders.ACCEPT, "application/problem+json");
+        request.setAttribute(RequestCorrelationFilter.REQUEST_ID_ATTRIBUTE, "req-oauth-token-500");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, (req, res) -> { throw new IllegalStateException(SECRET); });
+
+        assertThat(response.getStatus()).isEqualTo(500);
+        assertThat(response.getContentType()).contains("application/json");
+        assertThat(response.getContentAsString()).isEqualTo("{\"error\":\"server_error\"}")
+                .doesNotContain("status", SECRET);
+        assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+        assertThat(response.getHeader("Pragma")).isEqualTo("no-cache");
+        assertThat(response.getHeader("X-Request-ID")).isEqualTo("req-oauth-token-500");
     }
 
     @Test
@@ -124,8 +146,10 @@ class ServletExceptionBoundaryFilterTest {
     }
 
     private ServletExceptionBoundaryFilter filter() {
+        ObjectMapper mapper = new ObjectMapper();
         return new ServletExceptionBoundaryFilter(new ApiErrorResponseWriter(
-                new ObjectMapper(), new StaticMessageSource()));
+                mapper, new StaticMessageSource()), new OAuthProtocolErrorWriter(mapper,
+                        new ApiErrorResponseWriter(mapper, new StaticMessageSource())));
     }
 
     private MockHttpServletRequest request(final String requestId) {

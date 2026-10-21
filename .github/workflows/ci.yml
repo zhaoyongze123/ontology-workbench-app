@@ -62,6 +62,8 @@ jobs:
         working-directory: apps/web
         env:
           HUSKY: '0'
+      - run: npm run test:errors
+        working-directory: apps/web
       - run: npm run build
         working-directory: apps/web
         env:

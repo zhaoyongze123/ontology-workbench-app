@@ -41,7 +41,8 @@ public final class SessionValidityFilter extends OncePerRequestFilter {
             if (user == null || !user.enabled() || !Objects.equals(user.authVersion(), principal.authVersion())) {
                 SecurityContextHolder.clearContext();
                 if (session != null) session.invalidate();
-            } else if (!isPassiveAuthProbe(request)) {
+            } else if (session != null && !isPassiveAuthProbe(request)) {
+                // 已认证请求可能来自测试或无 Cookie 的受信调用；没有会话时只做身份核验，不创建空会话。
                 session.setAttribute(LAST_REAL_ACTIVITY, now);
             }
         }

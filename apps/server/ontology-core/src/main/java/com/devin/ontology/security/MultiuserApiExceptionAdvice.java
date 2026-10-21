@@ -8,6 +8,7 @@ import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.common.exception.BusinessException;
 import com.devin.ontology.common.exception.ClientException;
 import com.devin.ontology.common.exception.ValidateException;
+import com.devin.ontology.identity.AccountLifecycleController;
 import com.devin.ontology.common.utils.r.ResultEnum;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
@@ -45,6 +46,8 @@ import org.springframework.web.multipart.support.MissingServletRequestPartExcept
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.transaction.TransactionTimedOutException;
 
 /** 多用户 App 的统一 MVC 错误边界；OAuth 协议端点仍由专属处理器拥有。 */
@@ -62,6 +65,7 @@ public class MultiuserApiExceptionAdvice {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Object> handle(final Exception exception, final HttpServletRequest request) {
         Failure failure = classify(exception);
+        failure = preserveLegacyAccountShape(failure, request);
         if (HttpErrorMapping.status(failure.code()).is5xxServerError()) {
             // Throwable message、SQL 与用户正文不进入日志；异常类型和 requestId 足以关联安全诊断。
             log.error("api request failed requestId={} errorCode={} exceptionType={}", writer.requestId(request),
@@ -70,6 +74,16 @@ public class MultiuserApiExceptionAdvice {
         return writer.response(request, HttpErrorMapping.status(failure.code()), failure.code(), failure.legacyShape(),
                 failure.legacyError(), failure.legacyNumericCode(), failure.fieldErrors(), failure.problemFields(),
                 failure.headers());
+    }
+
+    /** 账号管理端点继续保留既有 JSON 错误 envelope，避免统一错误协议改变旧调用方契约。 */
+    private Failure preserveLegacyAccountShape(final Failure failure, final HttpServletRequest request) {
+        Object handler = request.getAttribute(HandlerMapping.BEST_MATCHING_HANDLER_ATTRIBUTE);
+        if (!(handler instanceof HandlerMethod method)
+                || !AccountLifecycleController.class.isAssignableFrom(method.getBeanType())) {
+            return failure;
+        }
+        return Failure.shortError(failure.code(), LegacyErrorAdapterValue.forCode(failure.code()));
     }
 
     private Failure classify(final Exception exception) {

@@ -112,7 +112,7 @@ public class AgeStrategy extends ChartStorageStrategyAbstract {
                     """;
             jdbcTemplate.execute(load);
             AgeSql.executePrepared(jdbcTemplate,
-                    "SELECT ag_catalog.create_graph(?)", AgeSql.graphName(dbPrefix, id));
+                    "SELECT ontology.create_age_graph(?)", AgeSql.graphName(dbPrefix, id));
         } catch (UncategorizedSQLException e) {
             throw storageFailure(ResultEnum.NODE_ERROR, "创建图库", e);
         } catch (Exception e) {
@@ -138,7 +138,7 @@ public class AgeStrategy extends ChartStorageStrategyAbstract {
         jdbcTemplate.execute(load);
         try {
             ids.forEach(id -> {
-                AgeSql.executePrepared(jdbcTemplate, "SELECT ag_catalog.drop_graph(?, true)",
+                AgeSql.executePrepared(jdbcTemplate, "SELECT ontology.drop_age_graph(?)",
                         AgeSql.graphName(dbPrefix, id));
             });
         } catch (UncategorizedSQLException e) {

@@ -4,8 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 
 import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.OntologyServerApplication;
@@ -133,6 +138,28 @@ class AccountLifecycleDatabaseIntegrationTest {
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
                         .jsonPath("$.error").value("method_not_allowed"));
+    }
+
+    @Test
+    void lastAdministratorHttpDisableKeepsTheLegacyConflictBody() throws Exception {
+        adminId = UUID.randomUUID().toString();
+        insertAdmin(adminId, "it_last_admin_http_");
+        String username = jdbc.queryForObject("SELECT username FROM ontology.og_user WHERE id = ?",
+                String.class, adminId);
+        var principal = new LoginUserPrincipal(adminId, username, "IT Admin", true, 0,
+                System.currentTimeMillis());
+        var authentication = UsernamePasswordAuthenticationToken.authenticated(
+                principal, null, java.util.List.of());
+
+        mvc.perform(patch("/admin/users/{userId}/enabled", adminId)
+                        .with(authentication(authentication))
+                        .with(csrf())
+                        .contentType("application/json")
+                        .accept("application/json")
+                        .content("{\"enabled\":false}"))
+                .andExpect(status().isConflict())
+                .andExpect(content().json("{\"error\":\"conflict\"}"))
+                .andExpect(jsonPath("$.success").doesNotExist());
     }
 
     @Test

@@ -39,18 +39,18 @@ python3 integrations/workbench/tools/finalize.py \
 3. 只把非超级用户、无 `BYPASSRLS` 的运行账号交给 Java；对实际对象权限、AGE 建图/查询能力和跨项目拒绝做证据核验。完成停机备份/恢复演练后才允许另行审议本机切换；本候选包不会切换原库。
 4. 失败时停止写流量，在隔离库保留错误证据并恢复该隔离副本；原库继续保持原状态。任何未来本机切换要先有切换前备份及已验证恢复路径，并按 #17 的安全条件回滚，不得回到公开无权限入口。
 
-`apps/server/ontology-it/init/01-bootstrap.sh` 仅为临时测试容器创建 `ontology` schema 和低权限运行角色。业务初始化使用 Java CLI：先在已完成备份恢复和存量归属核对的隔离数据库准备仓库外 JSON（严格符合 `BootstrapService.BootstrapInput`，含 7 用户、2 测试项目；目录 `0700`、文件 `0600`），然后从仓库根目录通过已编译工件并明确加载隔离库配置执行：
+业务初始化使用单独的 bootstrap 维护身份，而不是日常 Java 运行账号。先在已完成备份恢复和存量归属核对的隔离数据库运行 `prepare-db-roles.sql`、应用数据库迁移并运行 `finalize-db-permissions.sql`；然后从仓库外复制 [application-bootstrap.example.yaml](../../deploy/local/application-bootstrap.example.yaml)，只配置 bootstrap 登录账号连接和私有输入 JSON 路径。该角色只能读取冲突检测所需列、插入初始化身份/项目/成员/审计及 ledger，不能访问 OAuth 客户端，也不能更新或删除数据。JSON 严格符合 `BootstrapService.BootstrapInput`，含 7 用户、2 测试项目；目录 `0700`、文件 `0600`。执行命令：
 
 ```sh
 java -jar apps/server/ontology-core/target/ontology-core-0.0.1.jar \
-  --spring.config.additional-location=file:/绝对路径/private/application.local.yaml \
+  --spring.config.additional-location=file:/绝对路径/private/application.bootstrap.local.yaml \
   --spring.profiles.active=bootstrap \
   --ontology.bootstrap.apply=true \
   --spring.main.web-application-type=none \
   --ontology.bootstrap.file=/绝对路径/private/multiuser-bootstrap.local.json
 ```
 
-`application.local.yaml` 必须只含隔离库连接及所需私密配置；启动前逐项确认 JDBC host/database，禁止省略该参数让 Spring 使用默认库。密码与用户名相同是源码限定的本地测试策略，不用于正式用户。命令要求唯一管理员 `admin`，在无 OWNER 的存量项目上为其建立 OWNER 关系；遇到已有身份或 OWNER 冲突会停止，不自动覆盖。重复执行仅核验 bootstrap ledger、用户和项目，不重置密码。该命令尚未用于原运行库；不要把开发密码输入正式/原有数据库。HTTP ACL smoke 也会创建项目/图谱记录，只能指向隔离副本。
+`application.bootstrap.local.yaml` 必须使用独立的 `ONTOLOGY_BOOTSTRAP_DB_USER` / `ONTOLOGY_BOOTSTRAP_DB_PASSWORD`，且只连接隔离副本；启动前确认 JDBC host/database，不能复用运行账号或省略配置而落到默认数据库。密码与用户名相同是源码限定的本地测试策略，不用于正式用户。命令要求唯一管理员 `admin`，在无 OWNER 的存量项目上为其建立 OWNER 关系；遇到已有身份或 OWNER 冲突会停止，不自动覆盖。重复执行仅核验 bootstrap ledger、用户和项目，不重置密码。该命令尚未用于原运行库；不要把开发密码输入正式/原有数据库。HTTP ACL smoke 也会创建项目/图谱记录，只能指向隔离副本。
 
 ## 自动化证据
 
