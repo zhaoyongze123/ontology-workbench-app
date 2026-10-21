@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, 'feat/**', 'fix/**', 'chore/**', 'docs/**']
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -36,6 +37,18 @@ jobs:
           cache: maven
       - run: mvn -B -f apps/server/pom.xml verify
 
+  database-integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Build isolated PostgreSQL/AGE image and run database integration tests
+        run: bash apps/server/ontology-it/run.sh
+
   web:
     runs-on: ubuntu-24.04
     steps:
@@ -55,4 +68,13 @@ jobs:
           MULTIUSER_BUILD: '1'
       - run: npm run typecheck
         working-directory: apps/web
+      - name: Install isolated Playwright smoke runner
+        run: npm install --prefix "$RUNNER_TEMP/ontology-web-smoke" --no-package-lock --ignore-scripts playwright@1.60.0
+      - name: Install Chromium for frontend contract smoke
+        run: |
+          "$RUNNER_TEMP/ontology-web-smoke/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Run frontend contract smoke against mocked API
+        run: node scripts/frontend_contract_smoke.cjs
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/ontology-web-smoke/node_modules/playwright
 

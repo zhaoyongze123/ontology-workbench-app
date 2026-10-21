@@ -144,8 +144,9 @@ class SecuritySessionMockMvcTest {
         assertNull(SecurityContextHolder.getContext().getAuthentication());
     }
 
+    // 非 static 内部类不会被应用组件扫描误注册到真实集成测试上下文。
     @RestController
-    static class ProbeController {
+    class ProbeController {
         @GetMapping("/auth/me")
         org.springframework.http.ResponseEntity<Void> me() {
             return org.springframework.http.ResponseEntity.noContent().build();

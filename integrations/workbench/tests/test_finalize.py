@@ -9,7 +9,7 @@ module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 class Packaging(unittest.TestCase):
     def fixture_config(self):
         origin='https://example.invalid'
-        return {'serviceOrigin':origin,'pageUrl':origin+'/oidc/login','embedUrl':origin+'/oidc/embed','authorizationEndpoint':origin+'/oidc/app/authorize','tokenEndpoint':origin+'/oidc/app/token','userInfoEndpoint':origin+'/oidc/app/userinfo','redirectUri':'https://app.workbench.aos.work/basilcraw/api/apps/oauth2/callback','appEntryPath':'/ontology','clientId':'fixture-app-client','clientSecret':'offline-secret-fixture','clientAuthMethod':'body'}
+        return {'serviceOrigin':origin,'pageUrl':origin+'/ontology-management/login','embedUrl':origin+'/ontology-management/','authorizationEndpoint':origin+'/api/v1/oidc/app/authorize','tokenEndpoint':origin+'/api/v1/oidc/app/token','userInfoEndpoint':origin+'/api/v1/oidc/app/userinfo','redirectUri':'https://app.workbench.aos.work/basilcraw/api/apps/oauth2/callback','appEntryPath':'/ontology','clientId':'fixture-app-client','clientSecret':'offline-secret-fixture','clientAuthMethod':'body'}
 
     def minimal_config(self,origin='https://new.example.invalid'):
         # 新格式只维护服务域名；Workbench 固定 callback 和客户端身份仍显式配置。
@@ -27,6 +27,14 @@ class Packaging(unittest.TestCase):
             root=Path(temp);config=root/'config.json';config.write_text('{}')
             with self.assertRaises(ValueError):module.assemble(config,root/'output')
             self.assertFalse((root/'output').exists())
+    def test_public_example_without_real_java_client_cannot_create_archive(self):
+        # 公开示例故意不含 client id/secret，必须等管理员从 Java Admin 创建后再填私有副本。
+        config=Path(__file__).resolve().parents[1]/'config.example.json'
+        with tempfile.TemporaryDirectory() as temp:
+            output=Path(temp)/'output'
+            with self.assertRaisesRegex(ValueError,'缺少配置字段：clientId'):
+                module.assemble(config,output)
+            self.assertFalse(output.exists())
     def test_only_control_plane_contains_secret(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);path=root/'config.json';path.write_text(json.dumps(self.fixture_config()))
@@ -34,9 +42,9 @@ class Packaging(unittest.TestCase):
             archive=Path(result['archive'])
             self.assertEqual(archive.stat().st_mode & 0o777,0o600)
             self.assertEqual(archive.read_bytes() and hashlib.sha256(archive.read_bytes()).hexdigest(),result['sha256'])
-            self.assertEqual((root/'out/ontology-0.1.1-admin-upload.zip.sha256').stat().st_mode & 0o777,0o600)
-            self.assertIn(result['sha256'],(root/'out/ontology-0.1.1-admin-upload.zip.sha256').read_text())
-            self.assertEqual(result['version'],'0.1.1')
+            self.assertEqual((root/'out/ontology-0.2.0-rc.1-admin-upload.zip.sha256').stat().st_mode & 0o777,0o600)
+            self.assertIn(result['sha256'],(root/'out/ontology-0.2.0-rc.1-admin-upload.zip.sha256').read_text())
+            self.assertEqual(result['version'],'0.2.0-rc.1')
             report=json.loads(Path(result['validationReport']).read_text())
             self.assertEqual(report['archiveSha256'],result['sha256'])
             self.assertFalse(report['appResourceAuthorizationVerified'])
@@ -54,15 +62,15 @@ class Packaging(unittest.TestCase):
                     if name!='oauth-clients.yaml':self.assertNotIn(b'offline-secret-fixture',z.read(name))
                 manifest=yaml.safe_load(z.read('manifest.yaml'))
                 self.assertEqual(manifest['plugin']['hasIframe'],True)
-                self.assertEqual(manifest['plugin']['iframeUrl'],'https://example.invalid/oidc/embed')
-                self.assertEqual(manifest['app']['websiteUrl'],'https://example.invalid/oidc/embed')
+                self.assertEqual(manifest['plugin']['iframeUrl'],'https://example.invalid/ontology-management/')
+                self.assertEqual(manifest['app']['websiteUrl'],'https://example.invalid/ontology-management/')
                 self.assertEqual(manifest['app']['entryPath'],'/ontology')
-                self.assertEqual(manifest['actions'][0]['url'],'https://example.invalid/oidc/login')
+                self.assertEqual(manifest['actions'][0]['url'],'https://example.invalid/ontology-management/login')
                 self.assertEqual(manifest['auth']['oauth2']['redirectUri'],'https://app.workbench.aos.work/basilcraw/api/apps/oauth2/callback')
-                self.assertEqual(manifest['auth']['oauth2']['scopes'],['profile'])
+                self.assertEqual(manifest['auth']['oauth2']['scopes'],['profile','ontology.read','ontology.write','ontology.manage'])
                 self.assertEqual(manifest['auth']['oauth2']['options']['clientAuthMethod'],'body')
-                self.assertNotIn('refreshUrl',manifest['auth']['oauth2'])
-                self.assertNotIn('refreshToken',manifest['auth']['oauth2']['tokenFields'])
+                self.assertEqual(manifest['auth']['oauth2']['refreshUrl'],'https://example.invalid/api/v1/oidc/app/token')
+                self.assertEqual(manifest['auth']['oauth2']['tokenFields']['refreshToken'],'refresh_token')
                 service=json.loads(z.read('ontology-operations/scripts/service.json'))
                 self.assertEqual(service['pagePath'],'/ontology-management/')
                 self.assertEqual(service['apiPrefix'],'/api/v1')
@@ -89,16 +97,16 @@ class Packaging(unittest.TestCase):
             with zipfile.ZipFile(result['archive']) as z:
                 manifest=yaml.safe_load(z.read('manifest.yaml'))
                 self.assertEqual(manifest['variables']['base'],origin+'/api/v1')
-                self.assertEqual(manifest['plugin']['iframeUrl'],origin+'/oidc/embed')
-                self.assertEqual(manifest['app']['websiteUrl'],origin+'/oidc/embed')
-                self.assertEqual(manifest['actions'][0]['url'],origin+'/oidc/login')
+                self.assertEqual(manifest['plugin']['iframeUrl'],origin+'/ontology-management/')
+                self.assertEqual(manifest['app']['websiteUrl'],origin+'/ontology-management/')
+                self.assertEqual(manifest['actions'][0]['url'],origin+'/ontology-management/login')
                 oauth=manifest['auth']['oauth2']
-                self.assertEqual(oauth['authorizeUrl'],origin+'/oidc/app/authorize')
-                self.assertEqual(oauth['tokenUrl'],origin+'/oidc/app/token')
-                self.assertEqual(oauth['userInfoUrl'],origin+'/oidc/app/userinfo')
+                self.assertEqual(oauth['authorizeUrl'],origin+'/api/v1/oidc/app/authorize')
+                self.assertEqual(oauth['tokenUrl'],origin+'/api/v1/oidc/app/token')
+                self.assertEqual(oauth['userInfoUrl'],origin+'/api/v1/oidc/app/userinfo')
                 self.assertEqual(oauth['redirectUri'],module.APP_CALLBACK)
                 current_user=next(action for action in manifest['actions'] if action['key']=='getCurrentUser')
-                self.assertEqual(current_user['url'],origin+'/oidc/app/userinfo')
+                self.assertEqual(current_user['url'],origin+'/api/v1/oidc/app/userinfo')
                 service=json.loads(z.read('ontology-operations/scripts/service.json'))
                 self.assertEqual(service['serviceOrigin'],origin)
                 self.assertNotIn(b'first.example.invalid',b' '.join(z.read(name) for name in z.namelist()))
@@ -148,21 +156,35 @@ class Packaging(unittest.TestCase):
     def test_iframe_fields_are_required(self):
         origin='https://example.invalid'
         template=(module.VERSION/'source/manifest.yaml').read_text()
-        for key,value in {'__SERVICE_ORIGIN__':origin,'__PAGE_URL__':origin+'/oidc/login','__EMBED_URL__':origin+'/oidc/embed','__AUTHORIZATION_ENDPOINT__':origin+'/oidc/app/authorize','__TOKEN_ENDPOINT__':origin+'/oidc/app/token','__USERINFO_ENDPOINT__':origin+'/oidc/app/userinfo','__REDIRECT_URI__':module.APP_CALLBACK}.items():
+        for key,value in {'__SERVICE_ORIGIN__':origin,'__PAGE_URL__':origin+'/ontology-management/login','__EMBED_URL__':origin+'/ontology-management/','__AUTHORIZATION_ENDPOINT__':origin+'/api/v1/oidc/app/authorize','__TOKEN_ENDPOINT__':origin+'/api/v1/oidc/app/token','__USERINFO_ENDPOINT__':origin+'/api/v1/oidc/app/userinfo','__REDIRECT_URI__':module.APP_CALLBACK}.items():
             template=template.replace(key,value)
         manifest=yaml.safe_load(template);del manifest['plugin']['iframeUrl']
         with self.assertRaisesRegex(ValueError,'hasIframe=true 且 iframeUrl'):
             module.check_manifest_contract(manifest,origin)
+
+    def test_java_scope_and_refresh_fields_are_required(self):
+        origin='https://example.invalid'
+        template=(module.VERSION/'source/manifest.yaml').read_text()
+        for key,value in {'__SERVICE_ORIGIN__':origin,'__PAGE_URL__':origin+'/ontology-management/login','__EMBED_URL__':origin+'/ontology-management/','__AUTHORIZATION_ENDPOINT__':origin+'/api/v1/oidc/app/authorize','__TOKEN_ENDPOINT__':origin+'/api/v1/oidc/app/token','__USERINFO_ENDPOINT__':origin+'/api/v1/oidc/app/userinfo','__REDIRECT_URI__':module.APP_CALLBACK}.items():
+            template=template.replace(key,value)
+        manifest=yaml.safe_load(template)
+        manifest['auth']['oauth2']['scopes']=['profile']
+        with self.assertRaisesRegex(ValueError,'scopes 必须与 Java App broker'):
+            module.check_manifest_contract(manifest,origin)
+        manifest=yaml.safe_load(template)
+        del manifest['auth']['oauth2']['tokenFields']['refreshToken']
+        with self.assertRaisesRegex(ValueError,'refresh_token 字段'):
+            module.check_manifest_contract(manifest,origin)
     def test_app_website_url_is_required_and_matches_embed_url(self):
         origin='https://example.invalid'
         template=(module.VERSION/'source/manifest.yaml').read_text()
-        for key,value in {'__SERVICE_ORIGIN__':origin,'__PAGE_URL__':origin+'/oidc/login','__EMBED_URL__':origin+'/oidc/embed','__AUTHORIZATION_ENDPOINT__':origin+'/oidc/app/authorize','__TOKEN_ENDPOINT__':origin+'/oidc/app/token','__USERINFO_ENDPOINT__':origin+'/oidc/app/userinfo','__REDIRECT_URI__':module.APP_CALLBACK}.items():
+        for key,value in {'__SERVICE_ORIGIN__':origin,'__PAGE_URL__':origin+'/ontology-management/login','__EMBED_URL__':origin+'/ontology-management/','__AUTHORIZATION_ENDPOINT__':origin+'/api/v1/oidc/app/authorize','__TOKEN_ENDPOINT__':origin+'/api/v1/oidc/app/token','__USERINFO_ENDPOINT__':origin+'/api/v1/oidc/app/userinfo','__REDIRECT_URI__':module.APP_CALLBACK}.items():
             template=template.replace(key,value)
-        manifest=yaml.safe_load(template);manifest['app']['websiteUrl']='https://example.invalid/oidc/login'
-        with self.assertRaisesRegex(ValueError,'app.websiteUrl 必须指向 /oidc/embed'):
+        manifest=yaml.safe_load(template);manifest['app']['websiteUrl']='https://example.invalid/ontology-management/login'
+        with self.assertRaisesRegex(ValueError,'app.websiteUrl 必须指向 /ontology-management/'):
             module.check_manifest_contract(manifest,origin)
     def test_conflicting_legacy_embed_override_is_rejected(self):
-        config=self.fixture_config();config['embedUrl']='https://other.invalid/oidc/embed'
+        config=self.fixture_config();config['embedUrl']='https://other.invalid/ontology-management/'
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);path=root/'config.json';path.write_text(json.dumps(config))
             with self.assertRaisesRegex(ValueError,'配置端点与 serviceOrigin 合同不一致：embedUrl'):

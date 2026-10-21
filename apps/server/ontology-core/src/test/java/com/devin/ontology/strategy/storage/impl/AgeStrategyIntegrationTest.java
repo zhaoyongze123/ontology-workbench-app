@@ -14,7 +14,7 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerA
 import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.retry.annotation.EnableRetry;
@@ -201,7 +201,7 @@ class AgeStrategyIntegrationTest {
      * @version 1.0.0
      * @since 1.0.0
      */
-    @Configuration(proxyBeanMethods = false)
+    @TestConfiguration(proxyBeanMethods = false)
     @EnableRetry(proxyTargetClass = true)
     @EnableTransactionManagement(proxyTargetClass = true)
     static class IntegrationConfiguration {

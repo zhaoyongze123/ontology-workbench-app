@@ -32,3 +32,9 @@ ontology:
       ip-limit: 30
       window: 5m
       cooldown: 5m
+    # OAuth 授权、Token 与撤销请求使用独立桶，不影响密码登录失败计数。
+    oauth-throttle:
+      source-limit: 60
+      client-limit: 120
+      window: 5m
+      cooldown: 1m

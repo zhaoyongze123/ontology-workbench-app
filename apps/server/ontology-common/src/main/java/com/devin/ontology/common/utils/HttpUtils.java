@@ -269,7 +269,7 @@ public class HttpUtils {
                 sb.append(line);
             }
         } catch (IOException e) {
-            log.error("Exception:", e);
+            log.error("读取请求内容失败 exceptionType={}", e.getClass().getSimpleName());
         }
         return sb.toString();
     }

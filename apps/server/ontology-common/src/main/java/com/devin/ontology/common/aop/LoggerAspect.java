@@ -1,9 +1,11 @@
 package com.devin.ontology.common.aop;
 
-import com.alibaba.fastjson2.JSON;
 import com.devin.ontology.common.annocation.Logger;
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.SneakyThrows;
+import jakarta.servlet.http.HttpServletResponse;
+import java.lang.reflect.Method;
+import java.util.Objects;
+import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -13,133 +15,86 @@ import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
-import java.lang.reflect.Method;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Objects;
-import java.util.Optional;
 
-/**
- * 2025/5/30 18:11.
- *
- * <p>
- * 日志切面类
- * </p>
- *
- * @author <a href="https://github.com/wzh-devin">devin</a>
- * @version 1.0
- * @since 1.0
- */
+/** Controller 日志只记录请求元数据，不序列化请求参数和业务响应。 */
 @Slf4j
 @Aspect
 @Component
 public class LoggerAspect {
+    private static final String REQUEST_ID_ATTRIBUTE = "ontology.requestId";
 
-    /**
-     * 切面.
-     */
     @Pointcut("execution (* com.devin..controller..*.*(..)) || @annotation(com.devin.ontology.common.annocation.Logger)")
     public void pointCut() {
     }
 
-    /**
-     * 环绕通知.
-     *
-     * @param joinPoint 切点
-     * @return Object
-     */
-    @SneakyThrows
     @Around("pointCut()")
-    public Object aroundAdvice(final ProceedingJoinPoint joinPoint) {
-        // 开始时间
-        long startTime = System.currentTimeMillis();
-
-        // 执行方法
-        Object result = joinPoint.proceed();
-
-        // 结束时间
-        long endTime = System.currentTimeMillis();
-
-        // 日志记录
-        recordLog(joinPoint, endTime - startTime, result);
-
-        return result;
+    public Object aroundAdvice(final ProceedingJoinPoint joinPoint) throws Throwable {
+        long startedAt = System.nanoTime();
+        try {
+            Object result = joinPoint.proceed();
+            recordLog(joinPoint, result, null, elapsedMillis(startedAt));
+            return result;
+        } catch (Throwable failure) {
+            // 异常文本和栈可能包含认证材料或用户输入，只记录异常类型。
+            recordLog(joinPoint, null, failure, elapsedMillis(startedAt));
+            throw failure;
+        }
     }
 
-    /**
-     * 日志记录.
-     *
-     * @param joinPoint 切点
-     * @param execTime  方法执行时间
-     * @param result    方法返回值
-     */
-    private void recordLog(final ProceedingJoinPoint joinPoint, final long execTime, final Object result) {
-        // 获取类名
-        String className = joinPoint.getTarget().getClass().getName();
-
-        // 获取方法签名
-        MethodSignature methodSignature = (MethodSignature) joinPoint.getSignature();
-
-        // 获取方法指标
-        Object[] args = joinPoint.getArgs();
-        Method method = methodSignature.getMethod();
-        String resultStr = JSON.toJSONString(result);
-
-        // 获取方法注解
-        Logger logger = method.getAnnotation(Logger.class);
-        String module = Optional.ofNullable(logger)
-                .map(Logger::module)
+    private void recordLog(final ProceedingJoinPoint joinPoint, final Object result,
+            final Throwable failure, final long elapsedMillis) {
+        MethodSignature signature = (MethodSignature) joinPoint.getSignature();
+        Method method = signature.getMethod();
+        Logger annotation = method.getAnnotation(Logger.class);
+        String module = Optional.ofNullable(annotation).map(Logger::module).orElse("");
+        String description = Optional.ofNullable(annotation)
+                .map(value -> Objects.equals(value.value(), "") ? value.desc() : value.value())
                 .orElse("");
-        String desc = Optional.ofNullable(logger)
-                .map(l -> {
-                    if (Objects.equals(l.value(), "")) {
-                        return l.desc();
-                    } else {
-                        return l.value();
-                    }
-                }).orElse("");
 
-        // 日志预设值
-        String time = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
-        ServletRequestAttributes requestAttributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        HttpServletRequest httpServletRequest = Optional.ofNullable(requestAttributes)
-                .map(ServletRequestAttributes::getRequest)
-                .orElseThrow();
+        ServletRequestAttributes attributes = requestAttributes();
+        HttpServletRequest request = attributes == null ? null : attributes.getRequest();
+        HttpServletResponse response = attributes == null ? null : attributes.getResponse();
+        String requestId = request == null ? "-"
+                : safeMetadata(request.getAttribute(REQUEST_ID_ATTRIBUTE));
+        String actor = request == null || request.getUserPrincipal() == null ? "anonymous"
+                : safeMetadata(request.getUserPrincipal().getName());
+        Object resolvedAddress = request == null ? null : request.getAttribute("ontology.clientAddress");
+        String peerAddress = request == null ? "-"
+                : safeMetadata(resolvedAddress == null ? request.getRemoteAddr() : resolvedAddress);
+        String path = request == null ? "-" : safeMetadata(request.getRequestURI());
+        String httpMethod = request == null ? "-" : safeMetadata(request.getMethod());
+        int status = response == null ? (failure == null ? 200 : 500) : response.getStatus();
+        String errorType = failure == null ? "-" : failure.getClass().getSimpleName();
+        String resultType = result == null ? "void" : result.getClass().getSimpleName();
 
-        // 生成日志信息
-        log.info("************************************************************************************************************");
-        log.info("【请求时间】===> {}", time);
-        log.info("【请求地址】===> {}", getIpAddr(httpServletRequest));
-        log.info("【请求方法】===> {}", className.concat(".").concat(method.getName()).concat("()"));
-        log.info("【请求参数】===> {}", args);
-        if (!Objects.equals(module, "")) {
-            log.info("【模块信息】===> {}", module);
-        }
-        if (!Objects.equals(desc, "")) {
-            log.info("【方法描述】===> {}", desc);
-        }
-        log.info("【返回参数】===> {}", resultStr);
-        log.info("【执行时间】===> {} ms", execTime);
-        log.info("************************************************************************************************************");
+        // 只记录参数个数、类型和响应状态；绝不记录参数值、响应正文或异常消息。
+        log.info("request completed requestId={} actor={} peer={} method={} path={} handler={} "
+                        + "status={} argCount={} resultType={} errorType={} module={} description={} elapsedMs={}",
+                requestId, actor, peerAddress, httpMethod, path,
+                signature.getDeclaringType().getSimpleName() + "." + method.getName(),
+                status, joinPoint.getArgs().length, resultType, errorType,
+                safeMetadata(module), safeMetadata(description), elapsedMillis);
     }
 
-    /**
-     * 获取请求IP地址.
-     *
-     * @param request HttpServletRequest
-     * @return String
-     */
-    private String getIpAddr(final HttpServletRequest request) {
-        String ip = request.getHeader("x-forwarded-for");
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("Proxy-Client-IP");
+    private ServletRequestAttributes requestAttributes() {
+        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes) {
+            return attributes;
         }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("WL-Proxy-Client-IP");
+        return null;
+    }
+
+    private String safeMetadata(final Object value) {
+        if (value == null) return "-";
+        String raw = value.toString();
+        StringBuilder sanitized = new StringBuilder(Math.min(raw.length(), 300));
+        for (int index = 0; index < raw.length() && sanitized.length() < 300; index++) {
+            char character = raw.charAt(index);
+            sanitized.append(Character.isISOControl(character) ? '_' : character);
         }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        return "0:0:0:0:0:0:0:1".equals(ip) ? "127.0.0.1" : ip;
+        return sanitized.toString();
+    }
+
+    private long elapsedMillis(final long startedAt) {
+        return (System.nanoTime() - startedAt) / 1_000_000L;
     }
 }

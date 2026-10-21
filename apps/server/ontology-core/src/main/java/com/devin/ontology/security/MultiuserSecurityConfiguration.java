@@ -2,6 +2,7 @@ package com.devin.ontology.security;
 
 import com.devin.ontology.identity.IdentityRepository;
 import com.devin.ontology.oidc.WorkbenchOidcConfigurer;
+import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,6 +16,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -31,6 +33,7 @@ import org.springframework.session.web.http.DefaultCookieSerializer;
 @Configuration
 @Profile("multiuser")
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+@EnableWebSecurity
 @EnableJdbcHttpSession(tableName = "ontology.spring_session", maxInactiveIntervalInSeconds = 1800)
 public class MultiuserSecurityConfiguration {
     @Bean
@@ -51,6 +54,14 @@ public class MultiuserSecurityConfiguration {
     }
 
     @Bean
+    TrustedClientAddressResolver trustedClientAddressResolver(
+            @Value("${ontology.security.trusted-proxies:}") final String proxyAddresses) {
+        Set<String> trustedProxyCidrs = Arrays.stream(proxyAddresses.split(","))
+                .map(String::trim).filter(value -> !value.isEmpty()).collect(Collectors.toUnmodifiableSet());
+        return new TrustedClientAddressResolver(trustedProxyCidrs);
+    }
+
+    @Bean
     DatabaseAuthenticationProvider databaseAuthenticationProvider(final IdentityRepository identities,
             final PasswordEncoder passwordEncoder) {
         return new DatabaseAuthenticationProvider(identities, passwordEncoder);
@@ -62,23 +73,35 @@ public class MultiuserSecurityConfiguration {
             final DatabaseAuthenticationProvider databaseAuthenticationProvider,
             final ObjectProvider<WorkbenchOidcConfigurer> workbenchConfigurer,
             final LoginAttemptThrottleService throttleService,
+            final OAuthProtocolRequestLimiter accountActionLimiter,
+            final TrustedClientAddressResolver addressResolver,
+            final SecurityAuditRecorder auditRecorder,
             @Value("${ontology.security.trusted-origins:}") final String origins) throws Exception {
         HttpSessionCsrfTokenRepository csrfRepository = new HttpSessionCsrfTokenRepository();
         csrfRepository.setHeaderName("X-CSRF-TOKEN");
         Set<String> trustedOrigins = Arrays.stream(origins.split(","))
                 .map(String::trim).filter(value -> !value.isEmpty()).collect(Collectors.toUnmodifiableSet());
-
-        http.csrf(csrf -> csrf.csrfTokenRepository(csrfRepository))
+        http.csrf(csrf -> csrf.csrfTokenRepository(csrfRepository)
+                        // 匿名密码动作以高熵单次 bearer token 绑定账号，并只从 POST body 接收。
+                        .ignoringRequestMatchers("/auth/account-actions/inspect", "/auth/activate",
+                                "/auth/password-reset"))
                 .cors(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
                         .sessionAuthenticationStrategy(new ChangeSessionIdAuthenticationStrategy()))
                 // 保留框架构建的管理器，使本地密码与 OIDC provider 共存。
                 .authenticationProvider(databaseAuthenticationProvider)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/auth/login", "/auth/csrf", "/auth/options").permitAll()
+                        // 只允许容器内部错误分派进入统一错误处理；普通请求仍受后续规则保护。
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                        .requestMatchers("/auth/login", "/auth/csrf", "/auth/options",
+                                "/auth/account-actions/inspect", "/auth/activate", "/auth/password-reset")
+                        .permitAll()
                         .requestMatchers("/oauth2/authorization/workbench", "/oidc/callback").permitAll()
+                        .requestMatchers("/oidc/app/consent").authenticated()
                         .requestMatchers("/auth/me", "/auth/logout", "/auth/logout-all",
-                                "/auth/workbench/bind").authenticated()
+                                "/auth/workbench/bind", "/auth/app-authorizations",
+                                "/auth/app-authorizations/**").authenticated()
+                        .requestMatchers("/admin/**").authenticated()
                         .requestMatchers("/organization/**", "/graph/**", "/node/**", "/relationship/**",
                                 "/cypher/query", "/projects/**", "/project-invitations/**", "/users/search")
                         .authenticated()
@@ -107,7 +130,7 @@ public class MultiuserSecurityConfiguration {
                             try {
                                 if (exception instanceof org.springframework.security.authentication.BadCredentialsException) {
                                     throttleService.recordFailure(request.getParameter("username"),
-                                            request.getRemoteAddr());
+                                            addressResolver.resolve(request));
                                 }
                                 jsonError(response, objectMapper, 401, "invalid_credentials");
                             } catch (RuntimeException unavailable) {
@@ -126,11 +149,16 @@ public class MultiuserSecurityConfiguration {
                                 objectMapper, 401, "unauthorized"))
                         .accessDeniedHandler((request, response, exception) -> jsonError(response,
                                 objectMapper, 403, "forbidden")))
+                .addFilterBefore(new RequestCorrelationFilter(addressResolver, auditRecorder),
+                        org.springframework.security.web.context.SecurityContextHolderFilter.class)
                 .addFilterBefore(new TrustedOriginFilter(trustedOrigins), CsrfFilter.class)
-                .addFilterBefore(new LoginRateLimitFilter(throttleService, objectMapper),
+                .addFilterBefore(new LoginRateLimitFilter(throttleService, objectMapper, addressResolver),
+                        UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new AccountActionRateLimitFilter(accountActionLimiter, addressResolver, objectMapper),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(new SessionValidityFilter(identities),
                         org.springframework.security.web.context.SecurityContextHolderFilter.class)
+                .addFilterAfter(new AuditActorCaptureFilter(), SessionValidityFilter.class)
                 .requestCache(AbstractHttpConfigurer::disable);
         WorkbenchOidcConfigurer oidc = workbenchConfigurer.getIfAvailable();
         if (oidc != null) {

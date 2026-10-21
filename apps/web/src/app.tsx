@@ -26,14 +26,35 @@ export async function getInitialState() {
   };
 }
 
+/** 将常见服务端错误码转换为用户可理解的提示，不把内部枚举原样显示。 */
+function safeBackendMessage(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const text = value.trim();
+  const code = text.toLowerCase();
+  const knownCodes: Record<string, string> = {
+    invalid_credentials: '用户名或密码错误',
+    too_many_attempts: '尝试次数过多，请稍后重试。',
+    account_disabled: '账号已停用，请联系系统管理员。',
+    account_not_activated: '账号尚未激活，请联系系统管理员。',
+    expired_token: '登录已过期，请重新登录。',
+  };
+  if (knownCodes[code]) return knownCodes[code];
+  // 形如 forbidden、access_denied 的单词是协议/内部代码，交给状态码映射中文化。
+  if (/^[a-z][a-z0-9_-]*$/i.test(text)) return undefined;
+  return text;
+}
+
 /** 错误处理 */
-const handleError = (error: any) => {
+const handleError = (error: any, opts?: { skipErrorHandler?: boolean }) => {
+  if (opts?.skipErrorHandler) return;
   if (!error.response) {
     if (error.name === 'BizError') {
-      message.error(error.message || '操作失败');
+      error.message = safeBackendMessage(error.message) || '操作失败，请稍后重试。';
+      message.error(error.message);
       return;
     }
-    message.error('请检查您的网络连接');
+    error.message = '网络暂时不可用，请检查连接后重试。';
+    message.error(error.message);
     return;
   }
 
@@ -44,29 +65,40 @@ const handleError = (error: any) => {
   const onLoginPage = pathname === '/login';
 
   if (status === 401) {
+    error.message = '登录已过期或账号已停用，请重新登录。';
+    message.warning(error.message);
     if (!onLoginPage) {
       // 使用当前 Router 的事实源，不假定应用采用 hash history。
       history.replace(`/login?redirect=${encodeURIComponent(route)}`);
     }
     return;
   }
-  const backendMessage = data?.message || data?.error;
+  const backendMessage = safeBackendMessage(data?.message) || safeBackendMessage(data?.error);
 
   switch (status) {
     case 400:
-      message.error(backendMessage || '请求参数无效');
+      error.message = backendMessage || '请求参数无效';
+      message.error(error.message);
       break;
     case 403:
-      message.error(backendMessage || '您没有权限访问该资源');
+      error.message = `权限可能已变更，请重新打开项目确认；未提交修改不会自动重试。${backendMessage ? `（${backendMessage}）` : ''}`;
+      message.error(error.message);
       break;
     case 404:
-      message.error(backendMessage || '请求的资源不存在');
+      error.message = backendMessage || '请求的资源不存在';
+      message.error(error.message);
       break;
     case 500:
-      message.error(backendMessage || '服务器发生错误');
+      error.message = backendMessage || '服务器暂时不可用，请稍后重试。';
+      message.error(error.message);
+      break;
+    case 429:
+      error.message = backendMessage || '请求过于频繁，请稍后重试。';
+      message.warning(error.message);
       break;
     default:
-      message.error(backendMessage || `错误 ${status}：请求发生错误`);
+      error.message = backendMessage || `请求失败（${status}），请稍后重试。`;
+      message.error(error.message);
   }
 };
 

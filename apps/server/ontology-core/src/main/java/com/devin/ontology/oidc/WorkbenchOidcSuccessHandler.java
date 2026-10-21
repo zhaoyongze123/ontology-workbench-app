@@ -49,6 +49,18 @@ final class WorkbenchOidcSuccessHandler implements AuthenticationSuccessHandler 
             HttpSession session = request.getSession(false);
             Object pendingValue = session == null ? null : session.getAttribute(PENDING_BINDING);
             if (session != null && pendingValue != null) session.removeAttribute(PENDING_BINDING);
+            Object returnValue = session == null ? null : session.getAttribute(WorkbenchOAuthReturnPath.SESSION_ATTRIBUTE);
+            if (session != null) session.removeAttribute(WorkbenchOAuthReturnPath.SESSION_ATTRIBUTE);
+            if (returnValue != null && !(returnValue instanceof String)) {
+                reject(request, response, HttpServletResponse.SC_UNAUTHORIZED, "workbench_login_failed");
+                return;
+            }
+            String oauthReturn = returnValue instanceof String value
+                    ? WorkbenchOAuthReturnPath.validate(value) : null;
+            if (returnValue != null && oauthReturn == null) {
+                reject(request, response, HttpServletResponse.SC_UNAUTHORIZED, "workbench_login_failed");
+                return;
+            }
             if (pendingValue != null && !(pendingValue instanceof PendingWorkbenchBinding)) {
                 reject(request, response, HttpServletResponse.SC_UNAUTHORIZED, "workbench_login_failed");
                 return;
@@ -93,8 +105,8 @@ final class WorkbenchOidcSuccessHandler implements AuthenticationSuccessHandler 
             HttpSession authenticatedSession = request.getSession(true);
             authenticatedSession.setAttribute(LAST_REAL_ACTIVITY, loginAt);
             authenticatedSession.removeAttribute(PENDING_BINDING);
-            // 登录完成后只回到固定前端路由，回调不接受任意 returnUrl/redirect 参数。
-            response.sendRedirect(FRONTEND_RETURN_PATH);
+            // App 授权登录只消费一次固定同源回跳；身份绑定流程始终回到普通前端入口。
+            response.sendRedirect(pending == null && oauthReturn != null ? oauthReturn : FRONTEND_RETURN_PATH);
         } catch (WorkbenchIdentityExceptions.BindingConflict conflict) {
             reject(request, response, HttpServletResponse.SC_CONFLICT, "workbench_identity_already_bound");
         } catch (WorkbenchIdentityExceptions.StaleInternalUser stale) {

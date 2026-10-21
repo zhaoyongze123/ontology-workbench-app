@@ -7,6 +7,8 @@ export default [
     component: './Login',
     layout: false,
   },
+  { path: '/account/activate', name: '设置账号密码', component: './AccountAction', layout: false },
+  { path: '/account/reset-password', name: '重置账号密码', component: './AccountAction', layout: false },
   {
     path: '/',
     redirect: '/home',
@@ -23,6 +25,10 @@ export default [
     component: './Invitations',
     wrappers: ['@/wrappers/auth'],
   },
+  { path: '/settings/app-authorizations', name: 'App 授权', component: './AppAuthorizations', wrappers: ['@/wrappers/auth'] },
+  { path: '/admin/users', name: '用户管理', component: './AdminUsers', wrappers: ['@/wrappers/auth'] },
+  { path: '/admin/oauth-clients', name: 'OAuth 客户端', component: './AdminOAuthClients', wrappers: ['@/wrappers/auth'] },
+  { path: '/admin/audit-events', name: '审计记录', component: './AdminAuditEvents', wrappers: ['@/wrappers/auth'] },
   {
     path: '/manage/:id',
     component: '@/layout',

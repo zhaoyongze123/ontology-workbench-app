@@ -2,7 +2,7 @@
 
 Ontology 独立图谱应用及 Workbench App 接入工程。前端使用 Umi / React / Ant Design，后端使用 Java 17 / Spring Boot，业务表与图数据存储在 PostgreSQL / Apache AGE。
 
-当前是本机开发测试版本。已实现密码登录、数据库持久会话、项目角色权限、站内成员邀请和受限只读图查询；Workbench OIDC 的 Java 迁移已写入代码，真实平台回归尚待完成。Agent OAuth2 令牌、刷新轮换及新上传包仍在后续实施范围内，历史 App 模板不能当作已验收的新版本。
+当前是本机开发测试候选版本。包含密码/Workbench OIDC 登录、数据库持久会话、账号激活与重置、项目角色权限、成员邀请、受限只读图查询，以及独立的 Agent OAuth2 授权、刷新轮换和撤销。Workbench 接入采用 Java 契约的 `0.2.0-rc.1` 源模板；真实平台联调与原库迁移验收须另行完成，不能复用历史 `0.1.1` 包。配置、启动、打包与验收步骤见 [候选版交付指南](docs/engineering/workbench-app-0.2.0-rc.1-release-and-manual-validation.md)。
 
 ## 目录
 

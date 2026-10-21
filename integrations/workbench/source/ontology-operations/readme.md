@@ -6,4 +6,4 @@ scripts/runtime.py 管地址、App 凭证与 HTTP；scripts/ontology.py 管固�
 
 示例输入：`{"operation":"organizationPage","query":{"pageNum":1,"pageSize":20}}`。本地凭证状态：`{"operation":"status"}`；读取用户身份：`{"operation":"identity"}`。通过 stdin 输入，不把 Token 放进参数。`status.verified=false` 只表示脚本不自行声称远端身份验证成功；需要运行 `identity` 才会向 broker 请求当前用户。
 
-当前 Workbench 授权注入合同需要在上传后联调。共享业务数据库暂不提供用户级隔离；身份门禁不能替代项目 / 图谱级授权设计。
+Workbench 授权注入、自动刷新和撤销仍须在上传后联调。Bearer scope 会在 Java API 与当前项目成员权限交集校验；本地脚本测试不证明真实 Workbench 成员身份或跨项目隔离已通过。

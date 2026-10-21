@@ -23,7 +23,9 @@ ASSIGNMENT = re.compile(
 
 def is_placeholder(value):
     lower = value.lower()
+    # psql 的 :'runtime_password' 是运行时绑定变量，不是仓库里的固定口令。
     return (value in {"access_token", "refresh_token", "client_secret", "expires_in", "token_type"}
+            or value == "runtime_password"
             or value.startswith(("${", "__", "<", "$", "process.", "os.", "self.", "properties.", "config.", "request."))
             or any(part in lower for part in ("example", "replace", "change-me", "changeme", "placeholder"))
             or "getenv(" in lower or "getproperty(" in lower or "read_text(" in lower)

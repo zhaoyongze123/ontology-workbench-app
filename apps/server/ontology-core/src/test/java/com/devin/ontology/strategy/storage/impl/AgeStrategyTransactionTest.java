@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.util.TestPropertyValues;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.jdbc.UncategorizedSQLException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -102,7 +102,7 @@ class AgeStrategyTransactionTest {
      * @version 1.0.0
      * @since 1.0.0
      */
-    @Configuration(proxyBeanMethods = false)
+    @TestConfiguration(proxyBeanMethods = false)
     @EnableRetry(proxyTargetClass = true)
     @EnableTransactionManagement(proxyTargetClass = true)
     static class TransactionConfiguration {

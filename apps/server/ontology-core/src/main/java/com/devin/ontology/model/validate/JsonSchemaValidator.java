@@ -49,7 +49,7 @@ public class JsonSchemaValidator {
         } catch (ValidateException e) {
             throw e;
         } catch (Exception e) {
-            log.error("解析Schema JSON失败", e);
+            log.error("解析Schema JSON失败 exceptionType={}", e.getClass().getSimpleName());
             throw new ValidateException(I18nUtils.getMessage(I18nConstant.PARAM_PARSE_FAIL));
         }
     }
@@ -72,7 +72,7 @@ public class JsonSchemaValidator {
         } catch (ValidateException e) {
             throw e;
         } catch (Exception e) {
-            log.error("解析JSON失败", e);
+            log.error("解析JSON失败 exceptionType={}", e.getClass().getSimpleName());
             throw new ValidateException(I18nUtils.getMessage(I18nConstant.PARAM_PARSE_FAIL));
         }
     }
@@ -120,7 +120,7 @@ public class JsonSchemaValidator {
         } catch (ValidateException e) {
             throw e;
         } catch (Exception e) {
-            log.error("解析Schema JSON失败", e);
+            log.error("解析Schema JSON失败 exceptionType={}", e.getClass().getSimpleName());
             throw new ValidateException(I18nUtils.getMessage(I18nConstant.PARAM_PARSE_FAIL));
         }
     }
@@ -149,7 +149,7 @@ public class JsonSchemaValidator {
         } catch (ValidateException e) {
             throw e;
         } catch (Exception e) {
-            log.error("解析JSON失败", e);
+            log.error("解析JSON失败 exceptionType={}", e.getClass().getSimpleName());
             throw new ValidateException(I18nUtils.getMessage(I18nConstant.PARAM_PARSE_FAIL));
         }
     }

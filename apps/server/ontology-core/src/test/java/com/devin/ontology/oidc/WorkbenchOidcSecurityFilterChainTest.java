@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -38,6 +37,7 @@ import org.springframework.security.web.context.NullSecurityContextRepository;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.springframework.test.context.web.WebAppConfiguration;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.web.authentication.AbstractAuthenticationProcessingFilter;
 import org.springframework.test.web.servlet.MockMvc;
@@ -96,7 +96,8 @@ class WorkbenchOidcSecurityFilterChainTest {
         return (org.springframework.security.web.context.SecurityContextRepository) field.get(filter);
     }
 
-    @Configuration(proxyBeanMethods = false)
+    // 该配置仅由当前测试显式加载，避免被整合测试的生产组件扫描器发现。
+    @TestConfiguration(proxyBeanMethods = false)
     @EnableWebSecurity
     static class TestSecurityConfiguration {
         @Bean

@@ -31,7 +31,7 @@ final class DatabaseAuthenticationProvider implements AuthenticationProvider {
             throw new BadCredentialsException("用户名或密码错误");
         }
         InternalUser candidate = identities.findByUsername(username).orElse(null);
-        boolean usable = candidate != null && candidate.enabled();
+        boolean usable = candidate != null && candidate.enabled() && candidate.passwordActivated();
         String hash = usable ? identities.findPasswordHash(candidate.id()).orElse(DUMMY_PASSWORD_HASH)
                 : DUMMY_PASSWORD_HASH;
         boolean matches = passwordEncoder.matches(password, hash);

@@ -26,7 +26,7 @@ export async function getProjectAccess(projectId: string) {
   return request<ApiEnvelope<ProjectAccess>>(`/api/v1/projects/${encodeURIComponent(projectId)}/access`, { method: 'GET' });
 }
 
-export async function getProjectMembers(projectId: string, pageNum = 1, pageSize = 100) {
+export async function getProjectMembers(projectId: string, pageNum = 1, pageSize = 20) {
   return request<ApiEnvelope<ProjectMember[]>>(`/api/v1/projects/${encodeURIComponent(projectId)}/members`, {
     method: 'GET', params: { pageNum, pageSize },
   });
@@ -62,7 +62,7 @@ export async function transferProjectOwner(projectId: string, targetUserId: stri
   });
 }
 
-export async function getMyInvitations(pageNum = 1, pageSize = 100) {
+export async function getMyInvitations(pageNum = 1, pageSize = 20) {
   return request<ApiEnvelope<ProjectInvitation[]>>('/api/v1/project-invitations/mine', { method: 'GET', params: { pageNum, pageSize } });
 }
 

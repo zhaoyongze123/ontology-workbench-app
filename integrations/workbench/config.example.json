@@ -1,0 +1,8 @@
+{
+  "serviceOrigin": "https://ontology.example.com",
+  "appEntryPath": "/ontology",
+  "redirectUri": "https://app.workbench.aos.work/basilcraw/api/apps/oauth2/callback",
+  "clientAuthMethod": "body",
+  "clientId": "",
+  "clientSecret": ""
+}

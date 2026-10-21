@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -81,7 +82,8 @@ class LoginAttemptThrottleServiceTest {
         LoginAttemptThrottleService throttle = mock(LoginAttemptThrottleService.class);
         when(throttle.isBlocked("unknown-user", "192.0.2.15")).thenReturn(true);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(new LoginEndpoint())
-                .addFilters(new LoginRateLimitFilter(throttle, new ObjectMapper())).build();
+                .addFilters(new LoginRateLimitFilter(throttle, new ObjectMapper(),
+                        new TrustedClientAddressResolver(Set.of()))).build();
 
         mvc.perform(post("/auth/login").param("username", "unknown-user")
                         .param("password", "must-never-be-reflected").with(request -> {
@@ -102,8 +104,9 @@ class LoginAttemptThrottleServiceTest {
         when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(blocked);
     }
 
+    // 非 static 内部类不会被应用组件扫描误注册到真实集成测试上下文。
     @RestController
-    static class LoginEndpoint {
+    class LoginEndpoint {
         @PostMapping("/auth/login")
         void login() {
             throw new AssertionError("limiter must stop the request before authentication");

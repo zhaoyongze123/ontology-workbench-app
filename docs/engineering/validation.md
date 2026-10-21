@@ -1,5 +1,7 @@
 # 验证方式
 
+本文保留基础版本的命令与历史验证记录。当前候选版的一次性数据库测试、浏览器契约检查和人工验收边界见 [0.2.0-rc.1 交付指南](workbench-app-0.2.0-rc.1-release-and-manual-validation.md)，最新执行结果以 GitHub Actions 为准。
+
 ## 可复现的仓库检查
 
 ```sh

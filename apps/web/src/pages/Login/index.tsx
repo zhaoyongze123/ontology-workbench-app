@@ -7,10 +7,21 @@ import { useNavigate, useSearchParams } from 'umi';
 import './index.less';
 
 const WORKBENCH_AUTH_URL = '/api/v1/oauth2/authorization/workbench';
+const APP_AUTHORIZE_RETURN_PREFIX = '/api/v1/oidc/app/authorize?';
+
+function safeAppAuthorizeReturn(value: string | null): string | undefined {
+  if (!value || !value.startsWith(APP_AUTHORIZE_RETURN_PREFIX) || /[\\\u0000-\u001f\u007f]/.test(value)) return undefined;
+  try {
+    const parsed = new URL(value, window.location.origin);
+    if (parsed.origin !== window.location.origin || parsed.pathname !== '/api/v1/oidc/app/authorize' || !parsed.search) return undefined;
+    return `${parsed.pathname}${parsed.search}`;
+  } catch { return undefined; }
+}
 
 const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const oauthReturn = safeAppAuthorizeReturn(searchParams.get('oauth_return'));
   const [options, setOptions] = useState<{ passwordEnabled: boolean; workbenchEnabled: boolean } | null>(null);
   const [optionsError, setOptionsError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -31,6 +42,11 @@ const LoginPage: React.FC = () => {
     setLoginError('');
     try {
       await login(values.username, values.password);
+      if (oauthReturn) {
+        // OAuth 授权回跳只允许固定的同源 App authorize 端点，并在成功登录后立即交回服务端。
+        window.location.assign(oauthReturn);
+        return;
+      }
       const requested = appRelativePath(searchParams.get('redirect') || '/home');
       const safeDestination = requested.startsWith('/') && !requested.startsWith('//')
         && !requested.startsWith('/login') ? requested : '/home';
@@ -48,10 +64,15 @@ const LoginPage: React.FC = () => {
     }
   };
 
-  const startWorkbench = () => window.location.assign(WORKBENCH_AUTH_URL);
+  const workbenchAuthorizationUrl = () => {
+    const target = new URL(WORKBENCH_AUTH_URL, window.location.origin);
+    if (oauthReturn) target.searchParams.set('oauth_return', oauthReturn);
+    return `${target.pathname}${target.search}`;
+  };
+  const startWorkbench = () => window.location.assign(workbenchAuthorizationUrl());
   const openWorkbenchWindow = () => {
     // 备用窗口只访问固定同源授权入口，并使用 noopener 阻断窗口反向引用。
-    window.open(new URL(WORKBENCH_AUTH_URL, window.location.origin).toString(), '_blank', 'noopener,noreferrer');
+    window.open(new URL(workbenchAuthorizationUrl(), window.location.origin).toString(), '_blank', 'noopener,noreferrer');
   };
 
   return (

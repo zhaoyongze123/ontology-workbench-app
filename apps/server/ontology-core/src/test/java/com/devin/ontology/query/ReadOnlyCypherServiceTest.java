@@ -19,6 +19,7 @@ import com.devin.ontology.project.ProjectAccessService;
 import com.devin.ontology.project.ProjectCapability;
 import com.devin.ontology.strategy.storage.ChartStorageStrategy;
 import com.devin.ontology.strategy.storage.impl.AgeStrategy;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigInteger;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -67,7 +68,7 @@ class ReadOnlyCypherServiceTest {
         when(graphDao.getById(BigInteger.valueOf(42))).thenReturn(graph());
         when(ageStrategy.convertRecord(anyMap())).thenAnswer(invocation -> invocation.getArgument(0));
         service = new ReadOnlyCypherService(access, graphDao, jdbc, transactionManager,
-                (ChartStorageStrategy) ageStrategy, new CypherReadOnlyValidator());
+                (ChartStorageStrategy) ageStrategy, new CypherReadOnlyValidator(), new ObjectMapper());
         query = new CypherQueryVO();
         query.setGraphId(BigInteger.valueOf(42));
         query.setGraphType(GraphTypeEnum.ENTITY);
@@ -146,7 +147,7 @@ class ReadOnlyCypherServiceTest {
     void explicitlyRejectsNonAgeStorageAfterTheReadOnlyPermissionChecks() {
         ChartStorageStrategy nonAgeStorage = mock(ChartStorageStrategy.class);
         ReadOnlyCypherService nonAgeService = new ReadOnlyCypherService(access, graphDao, jdbc, transactionManager,
-                nonAgeStorage, new CypherReadOnlyValidator());
+                nonAgeStorage, new CypherReadOnlyValidator(), new ObjectMapper());
 
         assertThrows(ValidateException.class, () -> nonAgeService.query(query));
 
@@ -169,6 +170,17 @@ class ReadOnlyCypherServiceTest {
         List<String> tooManyBytes = new ArrayList<>();
         for (int i = 0; i < 9; i++) tooManyBytes.add("x".repeat(256 * 1024));
         assertThrows(ValidateException.class, () -> queryWithRows(tooManyBytes));
+
+        // 控制器返回的是 JSON；反斜杠转义会使线上响应体大于原始单元格字节之和。
+        List<String> escapedJsonOverflow = new ArrayList<>();
+        for (int i = 0; i < 9; i++) escapedJsonOverflow.add("\\".repeat(120 * 1024));
+        assertThrows(ValidateException.class, () -> queryWithRows(escapedJsonOverflow));
+
+        // 列名也在每一行 JSON 中重复，不能被原始值字节统计漏掉。
+        query.setCypher("MATCH (n) RETURN n.name AS " + "a".repeat(15_900));
+        List<String> smallValues = new ArrayList<>();
+        for (int i = 0; i < 140; i++) smallValues.add("x");
+        assertThrows(ValidateException.class, () -> queryWithRows(smallValues));
     }
 
     private Collection<Map<String, Object>> queryWithRows(List<String> values) throws Exception {
