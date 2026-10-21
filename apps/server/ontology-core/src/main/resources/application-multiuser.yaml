@@ -15,6 +15,11 @@ spring:
     init:
       mode: never
 server:
+  # Tomcat 仅接受回环 Nginx 的转发头，避免无条件信任客户端伪造的 X-Forwarded-*。
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      internal-proxies: '127\.0\.0\.1|::1'
   servlet:
     session:
       cookie:
