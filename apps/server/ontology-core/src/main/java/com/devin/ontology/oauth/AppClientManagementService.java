@@ -1,10 +1,14 @@
 package com.devin.ontology.oauth;
 
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.identity.InternalUser;
 import com.devin.ontology.security.CurrentIdentity;
 import java.net.URI;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -42,13 +46,13 @@ public class AppClientManagementService {
         InternalUser actor = requireAdmin();
         if (request == null || request.displayName() == null || request.displayName().isBlank()
                 || request.displayName().length() > 160) {
-            throw new IllegalArgumentException("请填写有效的应用名称");
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         }
         String redirectUri = validateRedirectUri(request.redirectUri());
-        Set<String> scopes = request.scopes() == null ? Set.of() : Set.copyOf(request.scopes());
-        if (!scopes.contains("profile") || scopes.isEmpty()
+        Set<String> scopes = request.scopes() == null ? Set.of() : new HashSet<>(request.scopes());
+        if (scopes.stream().anyMatch(Objects::isNull) || !scopes.contains("profile") || scopes.isEmpty()
                 || !AgentClientRepository.supportedScopes().containsAll(scopes)) {
-            throw new IllegalArgumentException("必须包含 profile，且只能使用 Ontology 支持的授权范围");
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         }
 
         String id = UUID.randomUUID().toString();
@@ -68,7 +72,7 @@ public class AppClientManagementService {
     public void disable(final String clientRecordId) {
         InternalUser actor = requireAdmin();
         String clientId = clients.clientIdForRecord(clientRecordId);
-        if (clientId == null) throw new IllegalArgumentException("应用客户端不存在");
+        if (clientId == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
         jdbc.update("UPDATE ontology.og_app_client SET enabled = FALSE, update_time = NOW() WHERE id = ?",
                 clientRecordId);
         jdbc.update("UPDATE ontology.og_app_authorization SET revoked_at = COALESCE(revoked_at, NOW()), "
@@ -92,17 +96,17 @@ public class AppClientManagementService {
     private String validateRedirectUri(final String value) {
         if (value == null || value.isBlank() || value.length() > 2048
                 || value.contains("*") || value.chars().anyMatch(Character::isWhitespace)) {
-            throw new IllegalArgumentException("回调地址必须是精确的 HTTPS 地址");
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         }
         try {
             URI uri = URI.create(value);
             if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
                     || uri.getRawUserInfo() != null || uri.getFragment() != null) {
-                throw new IllegalArgumentException("回调地址必须是精确的 HTTPS 地址");
+                throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
             }
             return uri.toASCIIString();
         } catch (IllegalArgumentException invalid) {
-            throw new IllegalArgumentException("回调地址格式无效", invalid);
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID, invalid);
         }
     }
 

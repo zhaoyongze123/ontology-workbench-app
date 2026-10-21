@@ -3,13 +3,14 @@ package com.devin.ontology.identity;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.security.CurrentIdentity;
 import com.devin.ontology.security.PublicOrigin;
 import com.devin.ontology.security.SessionRevocationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.transaction.support.TransactionOperations;
 
 class AccountLifecycleServiceTest {
@@ -20,13 +21,17 @@ class AccountLifecycleServiceTest {
     @Test
     void actionTokenMustHaveExactRandomTokenShapeBeforeAnyDatabaseLookup() {
         assertThatThrownBy(() -> service.inspectActionToken("short"))
-                .isInstanceOf(ResponseStatusException.class);
+                .isInstanceOfSatisfying(OntologyApiException.class,
+                        failure -> org.assertj.core.api.Assertions.assertThat(failure.getErrorCode())
+                                .isEqualTo(ApiErrorCode.ACCOUNT_ACTION_INVALID));
     }
 
     @Test
     void passwordMustMeetMinimumLengthBeforeTokenConsumption() {
         assertThatThrownBy(() -> service.activate("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "too-short"))
-                .isInstanceOf(ResponseStatusException.class);
+                .isInstanceOfSatisfying(OntologyApiException.class,
+                        failure -> org.assertj.core.api.Assertions.assertThat(failure.getErrorCode())
+                                .isEqualTo(ApiErrorCode.PASSWORD_POLICY_VIOLATION));
     }
 
     @Test

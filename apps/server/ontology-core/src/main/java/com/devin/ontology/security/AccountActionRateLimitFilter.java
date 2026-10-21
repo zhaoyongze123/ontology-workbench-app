@@ -1,26 +1,28 @@
 package com.devin.ontology.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.ApiErrorResponseWriter;
+import com.devin.ontology.common.exception.LegacyErrorAdapter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.Map;
-import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /** 匿名账号动作按可信来源持久限流；从不读取请求正文或保存 token 原值。 */
 final class AccountActionRateLimitFilter extends OncePerRequestFilter {
     private final OAuthProtocolRequestLimiter limiter;
     private final TrustedClientAddressResolver addressResolver;
-    private final ObjectMapper mapper;
+    private final ApiErrorResponseWriter errorWriter;
 
     AccountActionRateLimitFilter(final OAuthProtocolRequestLimiter limiter,
-            final TrustedClientAddressResolver addressResolver, final ObjectMapper mapper) {
+            final TrustedClientAddressResolver addressResolver, final ApiErrorResponseWriter errorWriter) {
         this.limiter = limiter;
         this.addressResolver = addressResolver;
-        this.mapper = mapper;
+        this.errorWriter = errorWriter;
     }
 
     @Override
@@ -37,18 +39,16 @@ final class AccountActionRateLimitFilter extends OncePerRequestFilter {
         String bucket = "/auth/password-reset".equals(path) ? "ACCOUNT_RESET" : "ACCOUNT_ACTIVATE";
         try {
             if (!limiter.allowRequest(bucket, null, addressResolver.resolve(request))) {
-                response.setStatus(429);
-                response.setHeader("Retry-After", "60");
-                response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-                response.setCharacterEncoding("UTF-8");
-                mapper.writeValue(response.getWriter(), Map.of("error", "too_many_requests"));
+                HttpHeaders headers = new HttpHeaders();
+                headers.set(HttpHeaders.RETRY_AFTER, "60");
+                errorWriter.write(request, response, HttpStatus.TOO_MANY_REQUESTS, ApiErrorCode.RATE_LIMITED,
+                        LegacyErrorAdapter.Shape.ERROR_FIELD, "too_many_requests", headers);
                 return;
             }
         } catch (RuntimeException unavailable) {
-            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-            response.setCharacterEncoding("UTF-8");
-            mapper.writeValue(response.getWriter(), Map.of("error", "authentication_unavailable"));
+            errorWriter.write(request, response, HttpStatus.SERVICE_UNAVAILABLE,
+                    ApiErrorCode.DEPENDENCY_UNAVAILABLE, LegacyErrorAdapter.Shape.ERROR_FIELD,
+                    "authentication_unavailable", null);
             return;
         }
         chain.doFilter(request, response);

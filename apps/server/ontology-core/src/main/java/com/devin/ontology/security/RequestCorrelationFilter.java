@@ -1,5 +1,6 @@
 package com.devin.ontology.security;
 
+import com.devin.ontology.common.exception.ApiRequestContext;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -13,7 +14,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 /** 为每个请求生成服务端关联号，拒绝沿用客户端自报的关联号。 */
 @Slf4j
 public final class RequestCorrelationFilter extends OncePerRequestFilter {
-    static final String REQUEST_ID_ATTRIBUTE = "ontology.requestId";
+    static final String REQUEST_ID_ATTRIBUTE = ApiRequestContext.REQUEST_ID_ATTRIBUTE;
     static final String CLIENT_ADDRESS_ATTRIBUTE = "ontology.clientAddress";
 
     private final TrustedClientAddressResolver addressResolver;
@@ -32,7 +33,7 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
         String clientAddress = addressResolver.resolve(request);
         request.setAttribute(REQUEST_ID_ATTRIBUTE, requestId);
         request.setAttribute(CLIENT_ADDRESS_ATTRIBUTE, clientAddress);
-        response.setHeader("X-Request-ID", requestId);
+        response.setHeader(ApiRequestContext.REQUEST_ID_HEADER, requestId);
         MDC.put("requestId", requestId);
         try {
             filterChain.doFilter(request, response);
@@ -42,7 +43,13 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
                 log.warn("http request failed requestId={} peer={} method={} path={} status={}",
                         requestId, clientAddress, safeLogValue(request.getMethod(), 16),
                         safeLogValue(request.getRequestURI(), 512), response.getStatus());
-                auditRecorder.recordResponseFailure(request, response);
+                try {
+                    auditRecorder.recordResponseFailure(request, response);
+                } catch (RuntimeException auditFailure) {
+                    // 审计写入失败不能覆盖已经确定的业务响应。
+                    log.warn("http failure audit unavailable requestId={} exceptionType={}", requestId,
+                            auditFailure.getClass().getSimpleName());
+                }
             }
             MDC.remove("requestId");
         }

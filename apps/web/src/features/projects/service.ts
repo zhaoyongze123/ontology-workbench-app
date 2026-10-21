@@ -1,4 +1,4 @@
-import { request } from 'umi';
+import { localRequest as request } from '@/features/errors/localRequest';
 import type { ProjectRole } from './types';
 export type { ProjectRole } from './types';
 

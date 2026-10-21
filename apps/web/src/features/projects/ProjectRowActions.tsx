@@ -20,7 +20,12 @@ const ProjectRowActions: React.FC<Props> = ({ projectId, onEdit, onDelete, onLea
     let active = true;
     getProjectAccess(projectId)
       .then((response) => active && setAccess(response.data || null))
-      .catch(() => active && setAccess(null));
+      .catch((error) => {
+        if (active) {
+          setAccess(null);
+          message.error((error as Error)?.message || '无法读取项目权限');
+        }
+      });
     return () => { active = false; };
   }, [projectId]);
 

@@ -4,13 +4,12 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.devin.ontology.common.constant.I18nConstant;
 import com.devin.ontology.common.constant.MapKeyConstant;
 import com.devin.ontology.common.enums.GraphTypeEnum;
-import com.devin.ontology.common.exception.ValidateException;
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.common.utils.BeanCopyUtils;
 import com.devin.ontology.common.utils.IdGenerator;
-import com.devin.ontology.common.utils.i18n.I18nUtils;
 import com.devin.ontology.common.utils.r.PageResult;
 import com.devin.ontology.dao.EntityDao;
 import com.devin.ontology.dao.EntityRelationshipDao;
@@ -216,7 +215,7 @@ public class OntologyGraphStrategy extends GraphStrategyAbstract {
                 .eq(Ontology::getName, nodeVO.getName())
                 .one();
         if (Objects.nonNull(ontology)) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.NODE_IS_EXIST));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_NODE_NAME_CONFLICT);
         }
     }
 
@@ -254,7 +253,7 @@ public class OntologyGraphStrategy extends GraphStrategyAbstract {
                 .in(Entity::getOntologyId, nodeDeleteVO.getIdList())
                 .count();
         if (count > 0) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.NODE_HAVE_DEPENDENCY));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_NODE_HAS_DEPENDENCIES);
         }
         getOntologyDao().removeBatchByIds(nodeDeleteVO.getIdList());
     }
@@ -267,7 +266,7 @@ public class OntologyGraphStrategy extends GraphStrategyAbstract {
                 .eq(OntologyRelationship::getName, relationshipVO.getName())
                 .one();
         if (Objects.nonNull(relationship)) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.RELATIONSHIP_EXIST));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_RELATIONSHIP_CONFLICT);
         }
     }
 
@@ -309,7 +308,7 @@ public class OntologyGraphStrategy extends GraphStrategyAbstract {
                 .in(EntityRelationship::getOntologyRelationshipId, ontologyRelationshipIdSet)
                 .count();
         if (count > 0) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.RELATIONSHIP_HAVE_ENTITY));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_RELATIONSHIP_HAS_DEPENDENCIES);
         }
 
         // 删除本体关系

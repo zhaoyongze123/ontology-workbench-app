@@ -1,9 +1,7 @@
 package com.devin.ontology.oauth;
 
 import com.devin.ontology.identity.IdentityRepository;
-import com.devin.ontology.security.RequestCorrelationFilter;
 import com.devin.ontology.security.PublicOrigin;
-import com.devin.ontology.security.SecurityAuditRecorder;
 import com.devin.ontology.security.TrustedClientAddressResolver;
 import com.devin.ontology.security.AuditActorCaptureFilter;
 import com.devin.ontology.security.SessionValidityFilter;
@@ -29,7 +27,6 @@ import org.springframework.security.oauth2.server.authorization.client.Registere
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.http.HttpStatus;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -93,7 +90,6 @@ public class AgentOAuthServerConfiguration {
             final OpaqueOAuth2TokenGenerator tokenGenerator,
             final ObjectMapper mapper,
             final TrustedClientAddressResolver addressResolver,
-            final SecurityAuditRecorder auditRecorder,
             final OAuthProtocolRequestLimiter requestLimiter,
             @Value("${ontology.security.oauth-throttle.cooldown:1m}") final Duration throttleCooldown)
             throws Exception {
@@ -122,10 +118,8 @@ public class AgentOAuthServerConfiguration {
                         response.sendError(HttpStatus.UNAUTHORIZED.value());
                     }
                 }))
-                .addFilterBefore(new RequestCorrelationFilter(addressResolver, auditRecorder),
-                        SecurityContextHolderFilter.class)
-                .addFilterAfter(new OAuthProtocolRateLimitFilter(requestLimiter, addressResolver, mapper,
-                        throttleCooldown.toSeconds()), RequestCorrelationFilter.class)
+                .addFilterBefore(new OAuthProtocolRateLimitFilter(requestLimiter, addressResolver, mapper,
+                        throttleCooldown.toSeconds()), SecurityContextHolderFilter.class)
                 // OAuth 授权复用登录会话，但仍逐请求核验空闲/绝对时限和账号 authVersion。
                 .addFilterAfter(new SessionValidityFilter(identities), SecurityContextHolderFilter.class)
                 .addFilterAfter(new AuditActorCaptureFilter(), AnonymousAuthenticationFilter.class)
@@ -136,9 +130,7 @@ public class AgentOAuthServerConfiguration {
     @Bean
     @Order(2)
     SecurityFilterChain agentBearerApiFilterChain(final HttpSecurity http,
-            final AgentAccessTokenService tokenService, final ObjectMapper mapper,
-            final TrustedClientAddressResolver resolver,
-            final SecurityAuditRecorder auditRecorder) throws Exception {
+            final AgentAccessTokenService tokenService, final ObjectMapper mapper) throws Exception {
         org.springframework.security.web.util.matcher.RequestMatcher bearerApi = request -> {
             String header = request.getHeader("Authorization");
             // 业务 API 一旦显式带 Authorization 就进入无状态链，错误凭证不得回退到浏览器 Cookie。
@@ -159,14 +151,17 @@ public class AgentOAuthServerConfiguration {
                         new AuthorizationDecision(new AgentScopePolicy()
                                 .isAllowed(authentication.get(), context.getRequest()))))
                 .exceptionHandling(errors -> errors
-                        .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
+                        .authenticationEntryPoint((request, response, exception) -> {
+                            response.setHeader("WWW-Authenticate", "Bearer");
+                            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                        })
                         .accessDeniedHandler((request, response, exception) -> {
+                            response.setHeader("WWW-Authenticate", "Bearer error=\"insufficient_scope\"");
                             response.setStatus(HttpStatus.FORBIDDEN.value());
                             response.setContentType("application/json");
                             response.setCharacterEncoding("UTF-8");
                             mapper.writeValue(response.getWriter(), java.util.Map.of("error", "insufficient_scope"));
                         }))
-                .addFilterBefore(new RequestCorrelationFilter(resolver, auditRecorder), SecurityContextHolderFilter.class)
                 .addFilterBefore(new AgentBearerAuthenticationFilter(tokenService, mapper), AnonymousAuthenticationFilter.class)
                 .addFilterAfter(new AuditActorCaptureFilter(), AnonymousAuthenticationFilter.class)
                 .requestCache(AbstractHttpConfigurer::disable);

@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.devin.ontology.common.exception.ApiErrorResponseWriter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.Arrays;
@@ -24,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.context.support.StaticMessageSource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -82,8 +84,8 @@ class LoginAttemptThrottleServiceTest {
         LoginAttemptThrottleService throttle = mock(LoginAttemptThrottleService.class);
         when(throttle.isBlocked("unknown-user", "192.0.2.15")).thenReturn(true);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(new LoginEndpoint())
-                .addFilters(new LoginRateLimitFilter(throttle, new ObjectMapper(),
-                        new TrustedClientAddressResolver(Set.of()))).build();
+                .addFilters(new LoginRateLimitFilter(throttle, new TrustedClientAddressResolver(Set.of()),
+                        new ApiErrorResponseWriter(new ObjectMapper(), new StaticMessageSource()))).build();
 
         mvc.perform(post("/auth/login").param("username", "unknown-user")
                         .param("password", "must-never-be-reflected").with(request -> {

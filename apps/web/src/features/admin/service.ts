@@ -1,4 +1,4 @@
-import { request } from 'umi';
+import { localRequest as request } from '@/features/errors/localRequest';
 
 export type ManagedUser = { id: string; username: string; displayName: string; systemAdmin: boolean; enabled: boolean; passwordActivated: boolean; createTime: string };
 export type AccountPage = { items: ManagedUser[]; page: number; size: number; total: number };

@@ -18,6 +18,7 @@ import { App, Button, Row, Space, Table, Typography } from 'antd';
 import { useState } from 'react';
 import styles from './index.less';
 import ProgramPop from './ProgramPop';
+import { normalizeApiError } from '@/features/errors/apiError';
 
 function ProgramManage() {
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -83,7 +84,9 @@ function ProgramManage() {
               resolve(null);
               refreshProgramList();
             })
-            .catch(() => {
+            .catch((error) => {
+              // 删除请求由确认弹窗负责提示，避免全局重复提示或失败时误报成功。
+              message.error(normalizeApiError(error).message);
               resolve(null);
             });
         });
@@ -130,7 +133,7 @@ function ProgramManage() {
           refreshProgramList();
         })
         .catch((error) => {
-          message.error(error.message || '编辑失败');
+          message.error(normalizeApiError(error).message || '编辑失败');
         });
     } else {
       /** 新建项目 */
@@ -155,7 +158,9 @@ function ProgramManage() {
             });
           }
         })
-        .catch(() => {});
+        .catch((error) => {
+          message.error(normalizeApiError(error).message || '项目创建失败');
+        });
     }
   };
 

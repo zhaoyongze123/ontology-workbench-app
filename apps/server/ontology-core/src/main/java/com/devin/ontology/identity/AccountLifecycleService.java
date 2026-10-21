@@ -1,5 +1,7 @@
 package com.devin.ontology.identity;
 
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.security.CurrentIdentity;
 import com.devin.ontology.security.PublicOrigin;
 import com.devin.ontology.security.SessionRevocationService;
@@ -14,14 +16,12 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionOperations;
-import org.springframework.web.server.ResponseStatusException;
 
 /** 管理员账号生命周期与一次性密码链接的事务边界。 */
 @Service
@@ -56,7 +56,7 @@ public class AccountLifecycleService {
     public AccountPage listUsers(final int page, final int size) {
         requireSystemAdmin();
         if (page < 0 || size < 1 || size > MAX_PAGE_SIZE || (long) page * size > Integer.MAX_VALUE) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "分页参数无效");
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         }
         List<AccountUserView> users = jdbc.query(
                 "SELECT id, username, display_name, system_admin, enabled, password_activated, create_time "
@@ -80,7 +80,7 @@ public class AccountLifecycleService {
                                 + "password_activated, auth_version) VALUES (?, ?, ?, FALSE, TRUE, FALSE, 0)",
                         userId, request.username().strip(), request.displayName().strip());
             } catch (DuplicateKeyException duplicate) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "用户名已存在");
+                throw new OntologyApiException(ApiErrorCode.ACCOUNT_USERNAME_CONFLICT, duplicate);
             }
             String rawToken = issueToken(userId, "ACTIVATE", actor.id(), 24);
             audit(actor.id(), "ACCOUNT_ACTIVATION_LINK_ISSUED", userId);
@@ -102,7 +102,7 @@ public class AccountLifecycleService {
             if (prior == null) throw notFound();
             if (prior != enabled) {
                 if (!enabled && isLastEnabledSystemAdmin(targetUserId)) {
-                    throw new ResponseStatusException(HttpStatus.CONFLICT, "不能停用最后一个启用的系统管理员");
+                    throw new OntologyApiException(ApiErrorCode.ACCOUNT_LAST_ADMIN);
                 }
                 jdbc.update("UPDATE ontology.og_user SET enabled = ?, update_time = NOW() WHERE id = ?",
                         enabled, targetUserId);
@@ -128,7 +128,7 @@ public class AccountLifecycleService {
         return transactions.execute(status -> {
             InternalUser target = lockUser(targetUserId);
             if (target.passwordActivated()) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "账号已完成本地密码激活");
+                throw new OntologyApiException(ApiErrorCode.ACCOUNT_ALREADY_ACTIVATED);
             }
             String rawToken = issueToken(targetUserId, "ACTIVATE", actor.id(), 24);
             audit(actor.id(), "ACCOUNT_ACTIVATION_LINK_ISSUED", targetUserId);
@@ -272,15 +272,14 @@ public class AccountLifecycleService {
         if (request == null || request.username() == null || request.displayName() == null
                 || !request.username().strip().matches("[A-Za-z0-9][A-Za-z0-9._@+-]{1,119}")
                 || request.displayName().isBlank() || request.displayName().strip().length() > 200) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "账号字段无效");
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         }
     }
 
     private static void validatePassword(final String password) {
         if (password == null || password.length() < MIN_PASSWORD_LENGTH || password.length() > MAX_PASSWORD_LENGTH
                 || password.chars().anyMatch(Character::isISOControl)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "密码长度须为 12 到 1024 个字符且不能包含控制字符");
+            throw new OntologyApiException(ApiErrorCode.PASSWORD_POLICY_VIOLATION);
         }
     }
 
@@ -300,12 +299,12 @@ public class AccountLifecycleService {
         }
     }
 
-    private static ResponseStatusException invalidToken() {
-        return new ResponseStatusException(HttpStatus.BAD_REQUEST, "链接无效或已过期");
+    private static OntologyApiException invalidToken() {
+        return new OntologyApiException(ApiErrorCode.ACCOUNT_ACTION_INVALID);
     }
 
-    private static ResponseStatusException notFound() {
-        return new ResponseStatusException(HttpStatus.NOT_FOUND, "账号不存在");
+    private static OntologyApiException notFound() {
+        return new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
     }
 
     public record CreateAccountRequest(String username, String displayName) { }

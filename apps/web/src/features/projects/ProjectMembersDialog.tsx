@@ -73,8 +73,9 @@ const ProjectMembersDialog: React.FC<Props> = ({ projectId, access, open, onClos
     try {
       const response = await searchProjectUsers(searchText.trim(), 1, 20);
       setUsers(response.data || []);
-    } catch {
+    } catch (error) {
       setUsers([]);
+      message.error((error as Error)?.message || '用户搜索失败');
     } finally {
       setSearching(false);
     }
@@ -143,10 +144,15 @@ const ProjectMembersDialog: React.FC<Props> = ({ projectId, access, open, onClos
       okText: '退出项目',
       cancelText: '取消',
       onOk: async () => {
-        await leaveProject(projectId);
-        message.success('已退出项目');
-        onClose();
-        navigate('/home');
+        try {
+          await leaveProject(projectId);
+          message.success('已退出项目');
+          onClose();
+          navigate('/home');
+        } catch (error) {
+          message.error((error as Error)?.message || '退出项目失败');
+          throw error;
+        }
       },
     });
   };

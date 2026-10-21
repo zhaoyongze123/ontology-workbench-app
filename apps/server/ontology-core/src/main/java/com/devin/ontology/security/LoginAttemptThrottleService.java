@@ -51,6 +51,11 @@ public class LoginAttemptThrottleService {
         return Boolean.TRUE.equals(blocked);
     }
 
+    /** 给 429 Retry-After 使用与限流桶相同的冷却配置，避免提示时间和真实策略脱节。 */
+    public long retryAfterSeconds() {
+        return cooldown.toSeconds();
+    }
+
     /** 一次认证失败同时原子更新账号桶和 IP 桶，两个写入要么一起成功，要么一起回滚。 */
     @Transactional
     public void recordFailure(final String username, final String remoteAddr) {

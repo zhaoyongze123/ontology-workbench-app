@@ -2,6 +2,8 @@ import { RunTimeLayoutConfig, history } from '@umijs/max';
 import { App, ConfigProvider, message } from 'antd';
 import { appRelativePath } from './config/appBase';
 import { csrfRequestOptions } from './features/auth/csrf';
+import { normalizeApiError } from './features/errors/apiError';
+import { shouldRequestProblemDetails } from './features/errors/requestContract';
 
 /** 运行时配置 */
 export const layout: RunTimeLayoutConfig = () => {
@@ -26,79 +28,57 @@ export async function getInitialState() {
   };
 }
 
-/** 将常见服务端错误码转换为用户可理解的提示，不把内部枚举原样显示。 */
-function safeBackendMessage(value: unknown): string | undefined {
-  if (typeof value !== 'string' || !value.trim()) return undefined;
-  const text = value.trim();
-  const code = text.toLowerCase();
-  const knownCodes: Record<string, string> = {
-    invalid_credentials: '用户名或密码错误',
-    too_many_attempts: '尝试次数过多，请稍后重试。',
-    account_disabled: '账号已停用，请联系系统管理员。',
-    account_not_activated: '账号尚未激活，请联系系统管理员。',
-    expired_token: '登录已过期，请重新登录。',
+let loginRedirectPending = false;
+history.listen(() => {
+  // 路由状态是登录跳转的事实源；同一轮并发 401 只触发一次导航。
+  loginRedirectPending = false;
+});
+
+/** 业务 API 明确协商 Problem Details；成功响应的 DTO 结构不受影响。 */
+export async function errorContractRequestOptions(url: string, options: any) {
+  if (!shouldRequestProblemDetails(url)) return { url, options };
+  return {
+    url,
+    options: {
+      ...options,
+      headers: {
+        Accept: 'application/problem+json, application/json;q=0.9',
+        ...(options.headers || {}),
+      },
+    },
   };
-  if (knownCodes[code]) return knownCodes[code];
-  // 形如 forbidden、access_denied 的单词是协议/内部代码，交给状态码映射中文化。
-  if (/^[a-z][a-z0-9_-]*$/i.test(text)) return undefined;
-  return text;
 }
 
 /** 错误处理 */
 const handleError = (error: any, opts?: { skipErrorHandler?: boolean }) => {
-  if (opts?.skipErrorHandler) return;
-  if (!error.response) {
-    if (error.name === 'BizError') {
-      error.message = safeBackendMessage(error.message) || '操作失败，请稍后重试。';
-      message.error(error.message);
-      return;
-    }
-    error.message = '网络暂时不可用，请检查连接后重试。';
-    message.error(error.message);
-    return;
-  }
+  const appError = normalizeApiError(error);
+  // 即使局部 UI 接管提示，也先完成错误归一化与安全提示计算。
+  error.appError = appError;
+  error.message = appError.message;
+  if (opts?.skipErrorHandler || appError.kind === 'cancelled') return;
 
-  const { status, data } = error.response;
   const location = history.location;
   const pathname = appRelativePath(location.pathname);
   const route = `${pathname}${location.search}${location.hash}`;
   const onLoginPage = pathname === '/login';
 
-  if (status === 401) {
-    error.message = '登录已过期或账号已停用，请重新登录。';
-    message.warning(error.message);
-    if (!onLoginPage) {
+  if (appError.status === 401) {
+    if (onLoginPage) return;
+    if (!loginRedirectPending) {
+      loginRedirectPending = true;
+      message.warning(appError.message || '登录已过期，请重新登录。');
       // 使用当前 Router 的事实源，不假定应用采用 hash history。
       history.replace(`/login?redirect=${encodeURIComponent(route)}`);
     }
     return;
   }
-  const backendMessage = safeBackendMessage(data?.message) || safeBackendMessage(data?.error);
-
-  switch (status) {
-    case 400:
-      error.message = backendMessage || '请求参数无效';
-      message.error(error.message);
-      break;
-    case 403:
-      error.message = `权限可能已变更，请重新打开项目确认；未提交修改不会自动重试。${backendMessage ? `（${backendMessage}）` : ''}`;
-      message.error(error.message);
-      break;
-    case 404:
-      error.message = backendMessage || '请求的资源不存在';
-      message.error(error.message);
-      break;
-    case 500:
-      error.message = backendMessage || '服务器暂时不可用，请稍后重试。';
-      message.error(error.message);
-      break;
-    case 429:
-      error.message = backendMessage || '请求过于频繁，请稍后重试。';
-      message.warning(error.message);
-      break;
-    default:
-      error.message = backendMessage || `请求失败（${status}），请稍后重试。`;
-      message.error(error.message);
+  if (appError.status === 429) {
+    const wait = appError.retryAfterSeconds;
+    message.warning(wait === undefined ? appError.message : `${appError.message} ${wait} 秒后可重试。`);
+  } else if (appError.status === 503 || appError.kind === 'timeout' || appError.kind === 'network') {
+    message.warning(appError.message);
+  } else {
+    message.error(appError.message);
   }
 };
 
@@ -106,13 +86,13 @@ const handleError = (error: any, opts?: { skipErrorHandler?: boolean }) => {
 export const request = {
   // Umi 的请求拦截器在运行时注册，构建配置里的函数不会进入实际请求链。
   withCredentials: true,
-  requestInterceptors: [csrfRequestOptions],
+  requestInterceptors: [errorContractRequestOptions, csrfRequestOptions],
   errorHandler: handleError,
   errorConfig: {
     /** 错误抛出 */
     errorThrower: (res: any) => {
       const { success, data, code, message: backendMessage, errorCode, errorMessage } = res;
-      if (!success) {
+      if (success === false) {
         const error: any = new Error(errorMessage || backendMessage || '操作失败');
         error.name = 'BizError';
         error.info = { errorCode: errorCode ?? code, errorMessage: errorMessage || backendMessage, data };

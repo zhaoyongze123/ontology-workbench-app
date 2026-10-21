@@ -3,14 +3,12 @@ package com.devin.ontology.strategy.graph.impl;
 import com.alibaba.fastjson2.JSONArray;
 import com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.devin.ontology.common.constant.I18nConstant;
 import com.devin.ontology.common.constant.MapKeyConstant;
 import com.devin.ontology.common.enums.GraphTypeEnum;
-import com.devin.ontology.common.exception.BusinessException;
-import com.devin.ontology.common.exception.ValidateException;
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.common.utils.BeanCopyUtils;
 import com.devin.ontology.common.utils.IdGenerator;
-import com.devin.ontology.common.utils.i18n.I18nUtils;
 import com.devin.ontology.common.utils.r.PageResult;
 import com.devin.ontology.dao.EntityDao;
 import com.devin.ontology.dao.EntityRelationshipDao;
@@ -233,10 +231,10 @@ public class EntityGraphStrategy extends GraphStrategyAbstract {
     ) {
         Graph oldEntityGraph = jsonGraphInfo.getGraph();
         if (Objects.isNull(oldEntityGraph)) {
-            throw new BusinessException(I18nUtils.getMessage(I18nConstant.JSON_FIELD_CANNOT_BE_EMPTY, "Entity Graph"));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_IMPORT_INVALID);
         }
         if (Objects.isNull(oldEntityGraph.getLinkOntologyGraph())) {
-            throw new BusinessException(I18nUtils.getMessage(I18nConstant.JSON_FIELD_CANNOT_BE_EMPTY, "Entity Link Ontology Graph"));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_IMPORT_INVALID);
         }
         // 保存本体图谱
         JsonGraphInfo ontologyJsonGraphInfo = BeanCopyUtils.copy(jsonGraphInfo, JsonGraphInfo.class);
@@ -425,7 +423,7 @@ public class EntityGraphStrategy extends GraphStrategyAbstract {
                 .eq(Entity::getName, nodeVO.getName())
                 .one();
         if (Objects.nonNull(entity)) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.NODE_IS_EXIST));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_NODE_NAME_CONFLICT);
         }
     }
 
@@ -479,7 +477,7 @@ public class EntityGraphStrategy extends GraphStrategyAbstract {
                 .eq(EntityRelationship::getName, relationshipVO.getName())
                 .one();
         if (Objects.nonNull(relationship)) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.RELATIONSHIP_EXIST));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_RELATIONSHIP_CONFLICT);
         }
     }
 
