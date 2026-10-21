@@ -113,8 +113,8 @@ spring:
           enabled: true
           # 数据库类型
           db-type: postgresql
-          # 是否记录慢SQL
-          log-slow-sql: true
+          # 只保留统计信息；慢 SQL 日志可能包含参数值和查询正文。
+          log-slow-sql: false
           # 慢SQL的标准，单位毫秒
           slow-sql-millis: 3000
           # 合并多个相同SQL，避免因为参数不同而统计多条SQL
@@ -124,8 +124,9 @@ spring:
         slf4j:
           # 启用日志功能
           enabled: true
-          # 是否记录SQL语句
+          # Druid 的异常日志开关独立于 statement-log-enabled，必须分别关闭。
           statement-log-enabled: false
+          statement-log-error-enabled: false
           # 是否记录可执行SQL语句
           statement-executable-sql-log-enable: false
 

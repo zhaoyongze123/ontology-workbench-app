@@ -8,6 +8,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.http.HttpHeaders;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -24,5 +28,20 @@ public class SecurityExceptionAdvice {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, String>> accessDenied(final AccessDeniedException exception) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "forbidden"));
+    }
+
+    /** HTTP 协议格式错误必须保持 4xx，不能被旧全局 catch-all 改写成服务器错误。 */
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
+    public ResponseEntity<Map<String, String>> invalidRequest(final Exception exception) {
+        return ResponseEntity.badRequest().body(Map.of("error", "invalid_request"));
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, String>> methodNotAllowed(
+            final HttpRequestMethodNotSupportedException exception) {
+        HttpHeaders headers = new HttpHeaders();
+        if (exception.getSupportedHttpMethods() != null) headers.setAllow(exception.getSupportedHttpMethods());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).headers(headers)
+                .body(Map.of("error", "method_not_allowed"));
     }
 }

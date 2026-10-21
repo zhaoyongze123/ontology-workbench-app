@@ -10,6 +10,8 @@ import com.devin.ontology.project.ProjectCapability;
 import com.devin.ontology.strategy.storage.AgeSql;
 import com.devin.ontology.strategy.storage.ChartStorageStrategy;
 import com.devin.ontology.strategy.storage.impl.AgeStrategy;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -47,16 +49,19 @@ public class ReadOnlyCypherService {
     private final JdbcTemplate jdbcTemplate;
     private final ChartStorageStrategy storageStrategy;
     private final CypherReadOnlyValidator validator;
+    private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
 
     public ReadOnlyCypherService(final ProjectAccessService projectAccessService, final GraphDao graphDao,
             final JdbcTemplate jdbcTemplate, final PlatformTransactionManager transactionManager,
-            final ChartStorageStrategy storageStrategy, final CypherReadOnlyValidator validator) {
+            final ChartStorageStrategy storageStrategy, final CypherReadOnlyValidator validator,
+            final ObjectMapper objectMapper) {
         this.projectAccessService = projectAccessService;
         this.graphDao = graphDao;
         this.jdbcTemplate = jdbcTemplate;
         this.storageStrategy = storageStrategy;
         this.validator = validator;
+        this.objectMapper = objectMapper;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.transactionTemplate.setReadOnly(true);
@@ -136,7 +141,7 @@ public class ReadOnlyCypherService {
             return statement;
         };
         return jdbcTemplate.query(statementCreator, (ResultSetExtractor<Collection<Map<String, Object>>>) rows -> {
-            long totalBytes = 0;
+            long totalBytes = 2; // JSON 数组的左右方括号
             List<Map<String, Object>> results = new ArrayList<>();
             int rowCount = 0;
             while (rows.next()) {
@@ -153,11 +158,6 @@ public class ReadOnlyCypherService {
                         cancelStatement(rows);
                         throw new ValidateException("查询单元格超过 256 KiB 上限");
                     }
-                    totalBytes += cellBytes;
-                    if (totalBytes > MAX_RESULT_BYTES) {
-                        cancelStatement(rows);
-                        throw new ValidateException("查询结果超过 2 MiB 上限");
-                    }
                     rawRow.put(rawName, value);
                 }
                 Map<String, Object> converted = ageStrategy.convertRecord(rawRow);
@@ -168,6 +168,17 @@ public class ReadOnlyCypherService {
                         throw new IllegalStateException("AGE 返回列与 Cypher 投影不匹配");
                     }
                     namedRow.put(outputNames.get(index), converted.get(rawName));
+                }
+                try {
+                    // 以将要返回给调用方的 JSON 行计量，覆盖别名、转义和分隔符开销。
+                    totalBytes += objectMapper.writeValueAsBytes(namedRow).length;
+                } catch (JsonProcessingException serializationFailure) {
+                    throw new ValidateException("查询结果无法序列化");
+                }
+                if (rowCount > 1) totalBytes++; // JSON 数组中的行间逗号
+                if (totalBytes > MAX_RESULT_BYTES) {
+                    cancelStatement(rows);
+                    throw new ValidateException("查询结果超过 2 MiB 上限");
                 }
                 results.add(namedRow);
             }

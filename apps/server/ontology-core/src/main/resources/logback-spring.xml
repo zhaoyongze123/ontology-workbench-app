@@ -105,6 +105,9 @@
     <logger name="org.hibernate" level="INFO"/>
     <logger name="com.zaxxer.hikari" level="INFO"/>
 
+    <!-- Druid Filter 在 SQL 执行失败时单独记录 SQL 与 SQLException；以日志分类作为第二道边界。 -->
+    <logger name="druid.sql" level="OFF"/>
+
     <!-- ==================== 你的应用日志级别 ==================== -->
     <!-- Mapper 的 DEBUG 日志会输出 SQL 参数；运行日志保持 INFO，避免写入图谱内容和用户输入。 -->
     <logger name="com.devin.ontology.mapper" level="WARN"/>
