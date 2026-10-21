@@ -8,10 +8,12 @@ APP_CALLBACK='https://app.workbench.aos.work/basilcraw/api/apps/oauth2/callback'
 BUSINESS_PAGE_PATH='/ontology-management/'
 BROWSER_LOGIN_PATH=BUSINESS_PAGE_PATH+'login'
 EMBED_PATH=BUSINESS_PAGE_PATH
+# Java servlet context path；OAuth broker 路由由服务端挂载在此 API 前缀下。
+API_PREFIX='/api/v1'
 BROKER_ENDPOINTS={
-    'authorizationEndpoint':'/oidc/app/authorize',
-    'tokenEndpoint':'/oidc/app/token',
-    'userInfoEndpoint':'/oidc/app/userinfo',
+    'authorizationEndpoint':API_PREFIX+'/oidc/app/authorize',
+    'tokenEndpoint':API_PREFIX+'/oidc/app/token',
+    'userInfoEndpoint':API_PREFIX+'/oidc/app/userinfo',
 }
 PLACEHOLDER=re.compile(r'__[A-Z0-9_]+__')
 ID_FIELD=re.compile(r'^(?:id|[A-Za-z]*Id)$')

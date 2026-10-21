@@ -36,6 +36,8 @@ public class AgentOAuthConsentController {
         Object csrfValue = request.getAttribute(CsrfToken.class.getName());
         String csrf = csrfValue instanceof CsrfToken token ? token.getToken() : "";
         String state = request.getParameter("state");
+        // OAuth 端点受 servlet context path 管理，部署前缀必须随请求带回表单。
+        String authorizeAction = request.getContextPath() + "/oidc/app/authorize";
 
         StringBuilder html = new StringBuilder("<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
                 + "<meta name='viewport' content='width=device-width,initial-scale=1'><title>授权 Ontology</title>"
@@ -43,7 +45,7 @@ public class AgentOAuthConsentController {
                 + "main{border:1px solid #ddd;border-radius:12px;padding:2rem}label{display:block;padding:.6rem}"
                 + "button{padding:.7rem 1rem;margin:.6rem .5rem 0 0}</style><main><h1>授权应用</h1><p>"
                 + "应用 <strong>").append(escape(client.displayName())).append("</strong> 请求访问你的 Ontology 账户。</p>"
-                + "<p>授权范围：</p><form method='post' action='/oidc/app/authorize'>"
+                + "<p>授权范围：</p><form method='post' action='").append(escape(authorizeAction)).append("'>"
                 + "<input type='hidden' name='_csrf' value='").append(escape(csrf)).append("'>")
                 .append("<input type='hidden' name='client_id' value='").append(escape(clientId)).append("'>")
                 .append("<input type='hidden' name='state' value='").append(escape(state)).append("'>")
@@ -52,7 +54,8 @@ public class AgentOAuthConsentController {
             html.append("<label><input type='checkbox' name='scope' value='").append(escape(scope))
                     .append("' checked> ").append(escape(scope)).append("</label>");
         }
-        html.append("<button type='submit'>允许访问</button></form><form method='post' action='/oidc/app/authorize'>")
+        html.append("<button type='submit'>允许访问</button></form><form method='post' action='")
+                .append(escape(authorizeAction)).append("'>")
                 .append("<input type='hidden' name='_csrf' value='").append(escape(csrf)).append("'>")
                 .append("<input type='hidden' name='client_id' value='").append(escape(clientId)).append("'>")
                 .append("<input type='hidden' name='state' value='").append(escape(state)).append("'>")
