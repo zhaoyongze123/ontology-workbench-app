@@ -12,4 +12,3 @@ export async function submitAccountAction(purpose: AccountActionPurpose, token: 
     { method: 'POST', data: { token, newPassword }, skipErrorHandler: true },
   );
 }
-
