@@ -35,6 +35,6 @@ public class Knife4jConfiguration {
                 .info(new Info()
                         .title("Ontology")
                         .version("1.0")
-                        .description("意言科技知识图谱接口文档"));
+                        .description("意言科技知识图谱接口文档。多用户模式的普通业务 API 支持通过 Accept: application/problem+json 协商 RFC 9457 错误响应；旧版 JSON 错误体保留兼容。OAuth/OIDC 协议端点保持各自的协议响应。"));
     }
 }

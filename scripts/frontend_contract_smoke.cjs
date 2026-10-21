@@ -117,7 +117,7 @@ let browser;
 
     adminUsersForbidden = true;
     await page.goto(`${base}/admin/users`, { waitUntil: 'domcontentloaded' });
-    await page.getByText('权限可能已变更，请重新打开项目确认；未提交修改不会自动重试。').first().waitFor();
+    await page.getByText('当前账号没有执行此操作的权限。').first().waitFor();
     if (await page.getByText('forbidden', { exact: true }).count()) throw new Error('403 internal code was shown to the user');
     adminUsersForbidden = false;
     console.log('PASS: 403 forbidden maps to the explicit Chinese permission-change message');

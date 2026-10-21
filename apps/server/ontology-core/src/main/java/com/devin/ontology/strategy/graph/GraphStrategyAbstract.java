@@ -1,12 +1,10 @@
 package com.devin.ontology.strategy.graph;
 
 import com.alibaba.fastjson2.JSON;
-import com.devin.ontology.common.constant.I18nConstant;
 import com.devin.ontology.common.enums.GraphTypeEnum;
-import com.devin.ontology.common.exception.BusinessException;
-import com.devin.ontology.common.exception.ValidateException;
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.common.utils.BeanCopyUtils;
-import com.devin.ontology.common.utils.i18n.I18nUtils;
 import com.devin.ontology.dao.EntityDao;
 import com.devin.ontology.dao.EntityRelationshipDao;
 import com.devin.ontology.dao.GraphDao;
@@ -90,7 +88,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
             // 检查本体图谱是否在同一组织下
             BigInteger organizationId = graphDao.getById(graph.getLinkGraphId()).getOrganizationId();
             if (!organizationId.equals(graphSaveVO.getOrganizationId())) {
-                throw new ValidateException(I18nUtils.getMessage(I18nConstant.GRAPH_ERROR));
+                throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
             }
         }
         // 查询图谱是否已经存在
@@ -100,7 +98,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
                 .eq(Graph::getName, graph.getName())
                 .count();
         if (graphCount > 0) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.GRAPH_EXIST, graphSaveVO.getGraphType() + "[" + graph.getName() + "]"));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_NAME_CONFLICT);
         }
 
         GraphVO graphVO = BeanCopyUtils.copy(graph.save(), GraphVO.class);
@@ -117,7 +115,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
         // 查询图谱
         Graph originalGraph = graphDao.getById(graphUpdateVO.getId());
         if (Objects.isNull(originalGraph)) {
-            throw new BusinessException(I18nUtils.getMessage(I18nConstant.GRAPH_NOT_EXIST));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_NOT_FOUND);
         }
         // 查询图谱是否已经存在
         Long graphCount = graphDao.lambdaQuery()
@@ -131,7 +129,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
                 )
                 .count();
         if (graphCount > 0) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.GRAPH_EXIST, getGraphType() + "[" + graphUpdateVO.getName() + "]"));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_NAME_CONFLICT);
         }
         Graph graph = BeanCopyUtils.copy(graphUpdateVO, Graph.class);
         graph.update();
@@ -184,7 +182,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
                         nodeDeleteVO.getGraphId()
                 ) > 0L
         ) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.NODE_HAVE_DEPENDENCY));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_NODE_HAS_DEPENDENCIES);
         }
         // 删除节点
         doDeleteNode(nodeDeleteVO);
@@ -254,7 +252,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
         // 获取图谱下的信息
         Long count = getNodeCount(graphVO.getId());
         if (count > 0) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.GRAPH_HAVE_DEPENDENCY));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_HAS_DEPENDENCIES);
         }
         // 删除图谱
         BeanCopyUtils.copy(graphVO, Graph.class)
@@ -281,7 +279,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
                 .eq(Graph::getType, getGraphType().name())
                 .one();
         if (Objects.isNull(graph)) {
-            throw new BusinessException(I18nUtils.getMessage(I18nConstant.GRAPH_NOT_EXIST));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_NOT_FOUND);
         }
         JsonGraphInfo jsonGraphInfo = new JsonGraphInfo();
         jsonGraphInfo.setGraph(graph);
@@ -298,17 +296,17 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
         try {
             jsonGraphInfo = JSON.parseObject(jsonData, JsonGraphInfo.class);
         } catch (Exception e) {
-            throw new BusinessException(I18nUtils.getMessage(I18nConstant.PARAM_PARSE_FAIL));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_IMPORT_INVALID);
         }
         // 检查本体节点和本体关系是否有重名存在
         checkDuplicateNodeAndRelationship(jsonGraphInfo);
         Graph graph = jsonGraphInfo.getGraph();
         if (Objects.isNull(graph)) {
-            throw new BusinessException(I18nUtils.getMessage(I18nConstant.JSON_FIELD_CANNOT_BE_EMPTY, "Graph"));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_IMPORT_INVALID);
         }
         // 查询是否符合当前上传类型
         if (!getGraphType().name().equals(graph.getType())) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.JSON_GRAPH_TYPE_ERROR, getGraphType()));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_TYPE_MISMATCH);
         }
         doImportGraph(jsonGraphInfo, organizationId);
     }
@@ -334,7 +332,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
                 .filter(relationshipNameSet::contains)
                 .collect(Collectors.toSet());
         if (!duplicateName.isEmpty()) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.NODE_RELATIONSHIP_NAME_DUPLICATE, duplicateName));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_IMPORT_INVALID);
         }
     }
 
@@ -347,7 +345,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
     private void checkNodeValid(final String nodeName, final List<PropertySchema> schemaList) {
         // 检查节点名称是否合法
         if (!nodeName.matches("^[a-zA-Z0-9_\\u4e00-\\u9fa5]+$")) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.NAME_ERROR));
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         }
         if (schemaList.isEmpty()) {
             return;
@@ -357,7 +355,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
                 .filter(schema -> StringUtils.isBlank(schema.getName()))
                 .count();
         if (emptyNameCount > 0) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.PROPERTY_ERROR));
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         }
         // 2. 检查属性名称是否重复
         long propertyUniqueCount = schemaList.stream()
@@ -366,7 +364,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
                 .distinct()
                 .count();
         if (propertyUniqueCount != schemaList.size()) {
-            throw new ValidateException(I18nUtils.getMessage(I18nConstant.PROPERTY_EXIST));
+            throw new OntologyApiException(ApiErrorCode.RESOURCE_CONFLICT);
         }
     }
 
@@ -390,7 +388,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
                         .eq(Entity::getGraphId, graphId)
                         .count();
             }
-            default -> throw new ValidateException(I18nUtils.getMessage(I18nConstant.PARAM_IS_INVALID));
+            default -> throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         };
     }
 
@@ -429,7 +427,7 @@ public abstract class GraphStrategyAbstract implements GraphStrategy {
                         )
                         .count();
             }
-            default -> throw new ValidateException(I18nUtils.getMessage(I18nConstant.PARAM_IS_INVALID));
+            default -> throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         };
     }
 

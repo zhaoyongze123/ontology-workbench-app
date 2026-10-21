@@ -1,5 +1,6 @@
 import { appRelativePath } from '@/config/appBase';
 import { getAuthOptions, login } from '@/features/auth/service';
+import { normalizeApiError } from '@/features/errors/apiError';
 import { LockOutlined, LoginOutlined } from '@ant-design/icons';
 import { Alert, Button, Card, Form, Input, Spin, Typography } from 'antd';
 import React, { useEffect, useState } from 'react';
@@ -31,7 +32,7 @@ const LoginPage: React.FC = () => {
     let active = true;
     getAuthOptions()
       .then((value) => active && setOptions(value))
-      .catch((error) => active && setOptionsError((error as Error)?.message || '暂时无法读取登录方式'));
+      .catch((error) => active && setOptionsError(normalizeApiError(error).message));
     return () => {
       active = false;
     };
@@ -52,13 +53,8 @@ const LoginPage: React.FC = () => {
         && !requested.startsWith('/login') ? requested : '/home';
       navigate(safeDestination, { replace: true });
     } catch (error) {
-      const response = (error as any)?.response;
-      const code = response?.data?.error;
-      setLoginError(code === 'invalid_credentials'
-        ? '用户名或密码错误'
-        : code === 'too_many_attempts'
-          ? '尝试次数过多，请稍后再试'
-          : response?.data?.message || (error as Error)?.message || '登录失败，请稍后重试');
+      const appError = normalizeApiError(error);
+      setLoginError(appError.message);
     } finally {
       setLoading(false);
     }

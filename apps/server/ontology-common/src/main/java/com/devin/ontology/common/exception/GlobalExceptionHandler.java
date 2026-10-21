@@ -11,16 +11,13 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.InvalidDataAccessResourceUsageException;
 import org.springframework.dao.NonTransientDataAccessResourceException;
 import org.springframework.http.HttpStatus;
+import org.springframework.context.annotation.Profile;
 import org.springframework.validation.BindException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 2025/6/12 16:16.
@@ -36,6 +33,7 @@ import java.util.regex.Pattern;
 @Slf4j
 @RestControllerAdvice
 @RequiredArgsConstructor
+@Profile("!multiuser")
 public class GlobalExceptionHandler {
     private static final String REQUEST_ID_ATTRIBUTE = "ontology.requestId";
 
@@ -48,7 +46,7 @@ public class GlobalExceptionHandler {
     @ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResult<?> handleBusinessException(final HttpServletRequest request, final BusinessException e) {
         logSafeFailure(request, e, e.getErrCode());
-        return ApiResult.fail(e.getErrCode(), e.getErrMsg());
+        return ApiResult.fail(e.getErrCode(), ResultEnum.BUSINESS_ERROR.getMessage());
     }
 
     /**
@@ -60,7 +58,7 @@ public class GlobalExceptionHandler {
     @ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResult<?> handleClientException(final HttpServletRequest request, final ClientException e) {
         logSafeFailure(request, e, e.getErrCode());
-        return ApiResult.fail(e.getErrCode(), e.getMessage());
+        return ApiResult.fail(e.getErrCode(), ResultEnum.CLIENT_ERROR.getMessage());
     }
 
     /**
@@ -71,10 +69,9 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException.class)
     @ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResult<?> handleMethodArgumentNotValidException(final BindException e) {
-        String errorField = Objects.requireNonNull(e.getFieldError()).getField();
-        String errorMsg = Objects.requireNonNull(e.getBindingResult().getFieldError()).getDefaultMessage();
-        Map<String, String> map = new HashMap<>();
-        map.put(errorField, errorMsg);
+        Map<String, String> map = new java.util.LinkedHashMap<>();
+        e.getBindingResult().getFieldErrors().forEach(fieldError -> map.putIfAbsent(
+                fieldError.getField(), fieldError.getDefaultMessage()));
         return ApiResult.fail(ResultEnum.PARAM_IS_INVALID, map);
     }
 
@@ -88,22 +85,8 @@ public class GlobalExceptionHandler {
     public ApiResult<?> handleFatalDiscoveryException(final HttpServletRequest request,
             final NonTransientDataAccessResourceException e) {
         logSafeFailure(request, e, null);
-        String errMsg = e.getMessage();
-        String errType = "";
-        String errData = "";
-        // 使用正则表达式提取数据库名称
-        if (errMsg != null) {
-            Matcher matcher = Pattern.compile("Database name: '([^']+)'")
-                    .matcher(errMsg);
-            if (matcher.find()) {
-                errType = I18nUtils.getMessage(I18nConstant.GRAPH_NOT_EXIST);
-                errData = matcher.group(1);
-            } else {
-                errType = I18nUtils.getMessage(I18nConstant.ERROR);
-                errData = errMsg;
-            }
-        }
-        return ApiResult.fail(ResultEnum.GRAPH_ERROR, errType + ": " + errData);
+        // 数据库异常原文可能包含 SQL、schema、连接信息或用户输入，不能作为 API 消息返回。
+        return ApiResult.fail(ResultEnum.GRAPH_ERROR, I18nUtils.getMessage(I18nConstant.ERROR));
     }
 
     /**
@@ -116,11 +99,8 @@ public class GlobalExceptionHandler {
     public ApiResult<?> handleInvalidDataAccessResourceUsageException(final HttpServletRequest request,
             final InvalidDataAccessResourceUsageException e) {
         logSafeFailure(request, e, null);
-        String errMsg = e.getMessage();
-        String errType = "";
-        if (errMsg.contains("Neo.ClientError.Statement.SyntaxError")) {
-            errType = "Cypher语法出错，请检查语法信息";
-        }
+        String errType = "42601".equals(sqlState(e)) ? "Cypher语法出错，请检查语法信息" :
+                I18nUtils.getMessage(I18nConstant.ERROR);
         return ApiResult.fail(ResultEnum.GRAPH_ERROR.getCode(), errType);
     }
 
@@ -132,11 +112,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DuplicateKeyException.class)
     @ResponseStatus(value = HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResult<?> handleDuplicateKeyException(final HttpServletRequest request, final DuplicateKeyException e) {
-        Map<String, String> errMap = extractDuplicateKeyAndValue(e.getMessage());
         logSafeFailure(request, e, ResultEnum.DUPLICATE_KEY.getCode());
-        if (!errMap.isEmpty()) {
-            return ApiResult.fail(ResultEnum.DUPLICATE_KEY, errMap.get("key"));
-        }
         return ApiResult.fail(ResultEnum.DUPLICATE_KEY);
     }
 
@@ -149,7 +125,7 @@ public class GlobalExceptionHandler {
     @ResponseStatus(value = HttpStatus.BAD_REQUEST)
     public ApiResult<?> handleDuplicateKeyException(final HttpServletRequest request, final ValidateException e) {
         logSafeFailure(request, e, e.getErrCode());
-        return ApiResult.fail(e.getErrCode(), e.getMessage());
+        return ApiResult.fail(e.getErrCode(), ResultEnum.VALIDATE_ERROR.getMessage());
     }
 
     /**
@@ -184,28 +160,12 @@ public class GlobalExceptionHandler {
         return sanitized.toString();
     }
 
-    /**
-     * 提取重复键和值.
-     * @param errorMessage 错误信息
-     * @return 键和值
-     */
-    private static Map<String, String> extractDuplicateKeyAndValue(final String errorMessage) {
-        Map<String, String> result = new HashMap<>();
-
-        // 正则表达式与上面相同
-        final Pattern pattern = Pattern.compile("Key \\((.*)\\)=\\((.*)\\) already exists");
-        Matcher matcher = pattern.matcher(errorMessage);
-
-        if (matcher.find() && matcher.groupCount() >= 2) {
-            // group(1) 捕获第一个括号的内容 (key)
-            String key = matcher.group(1);
-            // group(2) 捕获第二个括号的内容 (value)
-            String value = matcher.group(2);
-
-            result.put("key", key);
-            result.put("value", value);
+    private String sqlState(final Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof java.sql.SQLException sqlException && sqlException.getSQLState() != null) {
+                return sqlException.getSQLState();
+            }
         }
-
-        return result;
+        return null;
     }
 }

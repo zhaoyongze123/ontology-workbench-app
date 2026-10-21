@@ -1,5 +1,6 @@
 package com.devin.ontology.query;
 
+import com.devin.ontology.common.exception.ApiErrorCode;
 import com.devin.ontology.common.exception.ValidateException;
 import com.devin.ontology.strategy.storage.AgeSql;
 import java.nio.charset.StandardCharsets;
@@ -45,7 +46,7 @@ public final class CypherReadOnlyValidator {
         }
         if (cypher.length() > MAX_QUERY_BYTES
                 || cypher.getBytes(StandardCharsets.UTF_8).length > MAX_QUERY_BYTES) {
-            throw invalid("Cypher 超过 16 KiB 限制");
+            throw limitExceeded();
         }
         for (int i = 0; i < cypher.length(); i++) {
             char c = cypher.charAt(i);
@@ -56,9 +57,14 @@ public final class CypherReadOnlyValidator {
         List<Token> tokens = scan(cypher);
         rejectUnsafeTokens(tokens);
 
-        List<String> columns = AgeSql.parseReturnColumns(cypher);
+        List<String> columns;
+        try {
+            columns = AgeSql.parseReturnColumns(cypher);
+        } catch (ValidateException invalidProjection) {
+            throw invalid("Cypher RETURN 投影无效");
+        }
         if (columns.size() > MAX_COLUMNS) {
-            throw invalid("Cypher 最多支持 64 个返回列");
+            throw limitExceeded();
         }
         Set<String> aliases = new HashSet<>();
         for (String column : columns) {
@@ -91,11 +97,11 @@ public final class CypherReadOnlyValidator {
                 continue;
             }
             if (c == ';') {
-                throw invalid("不支持多语句 Cypher");
+                throw policyViolation();
             }
             if (c == '\\' || c == '$') {
                 // AGE 的 cstring 调用不支持外部参数；也阻止反斜杠 Unicode 转义绕过函数名检查。
-                throw invalid("Cypher 不支持转义标识符或外部参数");
+                throw policyViolation();
             }
             if (c == '\'' || c == '"') {
                 int end = skipString(source, i, c);
@@ -116,7 +122,7 @@ public final class CypherReadOnlyValidator {
                 continue;
             }
             if (c == '(' || c == '[' || c == '{') {
-                if (delimiters.size() >= 128) throw invalid("Cypher 嵌套层数超过限制");
+                if (delimiters.size() >= 128) throw limitExceeded();
                 delimiters.push(c);
                 tokens.add(new Token(TokenType.SYMBOL, String.valueOf(c), i++));
                 continue;
@@ -140,26 +146,26 @@ public final class CypherReadOnlyValidator {
             if (token.type() == TokenType.WORD) {
                 String word = token.text().toUpperCase(Locale.ROOT);
                 if (FORBIDDEN_WORDS.contains(word)) {
-                    throw invalid("Cypher 包含禁止的写入或管理关键字: " + word);
+                    throw policyViolation();
                 }
                 if (("AG_CATALOG".equals(word) || "PG_CATALOG".equals(word))
                         && isSymbol(tokens, i + 1, ".")) {
-                    throw invalid("不支持 PostgreSQL schema-qualified 函数");
+                    throw policyViolation();
                 }
             }
             if (token.type() == TokenType.SYMBOL && "(".equals(token.text()) && i > 0) {
                 Token name = tokens.get(i - 1);
                 if (name.type() == TokenType.QUOTED_IDENTIFIER) {
-                    throw invalid("不支持带引号的函数名");
+                    throw policyViolation();
                 }
                 if (name.type() == TokenType.WORD) {
                     String function = name.text().toLowerCase(Locale.ROOT);
                     if (GROUPING_WORDS.contains(name.text().toUpperCase(Locale.ROOT))) continue;
                     if (isSymbol(tokens, i - 2, ".")) {
-                        throw invalid("不支持 schema-qualified 函数");
+                        throw policyViolation();
                     }
                     if (!isAsciiFunctionName(name.text()) || !SAFE_FUNCTIONS.contains(function)) {
-                        throw invalid("Cypher 函数不在只读白名单中");
+                        throw policyViolation();
                     }
                 }
             }
@@ -248,7 +254,15 @@ public final class CypherReadOnlyValidator {
     }
 
     private ValidateException invalid(final String message) {
-        return new ValidateException(message);
+        return new ValidateException(ApiErrorCode.QUERY_SYNTAX_INVALID);
+    }
+
+    private ValidateException policyViolation() {
+        return new ValidateException(ApiErrorCode.QUERY_READ_ONLY_REQUIRED);
+    }
+
+    private ValidateException limitExceeded() {
+        return new ValidateException(ApiErrorCode.QUERY_INPUT_LIMIT_EXCEEDED);
     }
 
     private enum TokenType { WORD, STRING, QUOTED_IDENTIFIER, SYMBOL }

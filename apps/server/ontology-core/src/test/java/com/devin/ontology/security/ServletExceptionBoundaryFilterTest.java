@@ -1,19 +1,20 @@
 package com.devin.ontology.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.devin.ontology.common.exception.ApiErrorResponseWriter;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.ServletException;
+import org.springframework.http.HttpHeaders;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.context.support.StaticMessageSource;
 
 class ServletExceptionBoundaryFilterTest {
     private static final String SECRET = "fake-secret-must-never-appear-in-response-or-log";
@@ -27,9 +28,8 @@ class ServletExceptionBoundaryFilterTest {
     }
 
     @Test
-    void convertsUnhandledRuntimeFailureToFixed503AndLogsOnlyTypeAndRequestId() throws Exception {
-        SecurityAuditRecorder audit = mock(SecurityAuditRecorder.class);
-        ServletExceptionBoundaryFilter filter = new ServletExceptionBoundaryFilter(audit);
+    void convertsUnhandledRuntimeFailureToFixed500AndLogsOnlyTypeAndRequestId() throws Exception {
+        ServletExceptionBoundaryFilter filter = filter();
         appender.setContext((ch.qos.logback.classic.LoggerContext) LoggerFactory.getILoggerFactory());
         appender.start();
         logger.addAppender(appender);
@@ -38,16 +38,15 @@ class ServletExceptionBoundaryFilterTest {
 
         filter.doFilter(request, response, (req, res) -> { throw new IllegalStateException(SECRET); });
 
-        assertThat(response.getStatus()).isEqualTo(503);
+        assertThat(response.getStatus()).isEqualTo(500);
         assertThat(response.getContentAsString()).isEqualTo("{\"error\":\"request_unavailable\"}");
         assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
-        verify(audit).recordResponseFailure(request, response);
         assertNoSecretInLogs();
     }
 
     @Test
     void convertsUnhandledServletFailureWithoutLeakingCauseText() throws Exception {
-        ServletExceptionBoundaryFilter filter = new ServletExceptionBoundaryFilter(mock(SecurityAuditRecorder.class));
+        ServletExceptionBoundaryFilter filter = filter();
         appender.setContext((ch.qos.logback.classic.LoggerContext) LoggerFactory.getILoggerFactory());
         appender.start();
         logger.addAppender(appender);
@@ -56,15 +55,35 @@ class ServletExceptionBoundaryFilterTest {
         filter.doFilter(request("req-servlet-123"), response,
                 (req, res) -> { throw new ServletException("outer", new IllegalArgumentException(SECRET)); });
 
-        assertThat(response.getStatus()).isEqualTo(503);
+        assertThat(response.getStatus()).isEqualTo(500);
         assertThat(response.getContentAsString()).doesNotContain(SECRET);
         assertNoSecretInLogs();
     }
 
     @Test
+    void oauthTokenEndpointKeepsNativeErrorShapeRegardlessOfAcceptHeader() throws Exception {
+        ServletExceptionBoundaryFilter filter = filter();
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/oidc/app/token");
+        request.setContextPath("/api/v1");
+        request.setServletPath("/oidc/app/token");
+        request.addHeader(HttpHeaders.ACCEPT, "application/problem+json");
+        request.setAttribute(RequestCorrelationFilter.REQUEST_ID_ATTRIBUTE, "req-oauth-token-500");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, (req, res) -> { throw new IllegalStateException(SECRET); });
+
+        assertThat(response.getStatus()).isEqualTo(500);
+        assertThat(response.getContentType()).contains("application/json");
+        assertThat(response.getContentAsString()).isEqualTo("{\"error\":\"server_error\"}")
+                .doesNotContain("status", SECRET);
+        assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+        assertThat(response.getHeader("Pragma")).isEqualTo("no-cache");
+        assertThat(response.getHeader("X-Request-ID")).isEqualTo("req-oauth-token-500");
+    }
+
+    @Test
     void clearsPartialClientErrorBodyHeadersAndLengthBeforeWritingFixed503() throws Exception {
-        SecurityAuditRecorder audit = mock(SecurityAuditRecorder.class);
-        ServletExceptionBoundaryFilter filter = new ServletExceptionBoundaryFilter(audit);
+        ServletExceptionBoundaryFilter filter = filter();
         appender.setContext((ch.qos.logback.classic.LoggerContext) LoggerFactory.getILoggerFactory());
         appender.start();
         logger.addAppender(appender);
@@ -80,7 +99,7 @@ class ServletExceptionBoundaryFilterTest {
             throw new IllegalStateException(SECRET);
         });
 
-        assertThat(response.getStatus()).isEqualTo(503);
+        assertThat(response.getStatus()).isEqualTo(500);
         assertThat(response.getContentAsString()).isEqualTo("{\"error\":\"request_unavailable\"}")
                 .doesNotContain(SECRET);
         assertThat(response.getHeader("Content-Length")).isNull();
@@ -89,14 +108,12 @@ class ServletExceptionBoundaryFilterTest {
         assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
         assertThat(response.getContentType()).contains("application/json");
         assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
-        verify(audit).recordResponseFailure(request, response);
         assertNoSecretInLogs();
     }
 
     @Test
     void preservesNormalClientErrorsAndCannotRewriteCommittedResponse() throws Exception {
-        SecurityAuditRecorder audit = mock(SecurityAuditRecorder.class);
-        ServletExceptionBoundaryFilter filter = new ServletExceptionBoundaryFilter(audit);
+        ServletExceptionBoundaryFilter filter = filter();
         MockHttpServletResponse unauthorized = new MockHttpServletResponse();
         filter.doFilter(request("req-401"), unauthorized, (req, res) -> {
             MockHttpServletResponse response = (MockHttpServletResponse) res;
@@ -126,7 +143,13 @@ class ServletExceptionBoundaryFilterTest {
                 (req, res) -> { throw new IllegalStateException(SECRET); });
         assertThat(committed.isCommitted()).isTrue();
         assertThat(committed.getContentAsString()).isEqualTo("already-sent");
-        verifyNoInteractions(audit);
+    }
+
+    private ServletExceptionBoundaryFilter filter() {
+        ObjectMapper mapper = new ObjectMapper();
+        return new ServletExceptionBoundaryFilter(new ApiErrorResponseWriter(
+                mapper, new StaticMessageSource()), new OAuthProtocolErrorWriter(mapper,
+                        new ApiErrorResponseWriter(mapper, new StaticMessageSource())));
     }
 
     private MockHttpServletRequest request(final String requestId) {

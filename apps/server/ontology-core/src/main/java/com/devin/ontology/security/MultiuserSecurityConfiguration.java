@@ -1,10 +1,14 @@
 package com.devin.ontology.security;
 
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.ApiErrorResponseWriter;
+import com.devin.ontology.common.exception.LegacyErrorAdapter;
 import com.devin.ontology.identity.IdentityRepository;
 import com.devin.ontology.oidc.WorkbenchOidcConfigurer;
 import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Arrays;
 import java.util.Map;
@@ -14,6 +18,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.Ordered;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -62,6 +68,18 @@ public class MultiuserSecurityConfiguration {
     }
 
     @Bean
+    FilterRegistrationBean<RequestCorrelationFilter> requestCorrelationFilterRegistration(
+            final TrustedClientAddressResolver addressResolver, final SecurityAuditRecorder auditRecorder) {
+        FilterRegistrationBean<RequestCorrelationFilter> registration = new FilterRegistrationBean<>(
+                new RequestCorrelationFilter(addressResolver, auditRecorder));
+        registration.setName("ontologyRequestCorrelationFilter");
+        registration.addUrlPatterns("/*");
+        // 请求关联必须包在 Security、MVC 与异常兜底之外，才能观察最终状态并贯穿同一条诊断链。
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 5);
+        return registration;
+    }
+
+    @Bean
     DatabaseAuthenticationProvider databaseAuthenticationProvider(final IdentityRepository identities,
             final PasswordEncoder passwordEncoder) {
         return new DatabaseAuthenticationProvider(identities, passwordEncoder);
@@ -70,6 +88,7 @@ public class MultiuserSecurityConfiguration {
     @Bean
     SecurityFilterChain multiuserSecurityFilterChain(final HttpSecurity http,
             final IdentityRepository identities, final ObjectMapper objectMapper,
+            final ApiErrorResponseWriter errorWriter,
             final DatabaseAuthenticationProvider databaseAuthenticationProvider,
             final ObjectProvider<WorkbenchOidcConfigurer> workbenchConfigurer,
             final LoginAttemptThrottleService throttleService,
@@ -114,7 +133,9 @@ public class MultiuserSecurityConfiguration {
                             } catch (RuntimeException unavailable) {
                                 request.getSession(false).invalidate();
                                 org.springframework.security.core.context.SecurityContextHolder.clearContext();
-                                jsonError(response, objectMapper, 503, "authentication_unavailable");
+                                errorWriter.write(request, response, HttpStatus.SERVICE_UNAVAILABLE,
+                                        ApiErrorCode.DEPENDENCY_UNAVAILABLE, LegacyErrorAdapter.Shape.ERROR_FIELD,
+                                        "authentication_unavailable", null);
                                 return;
                             }
                             request.getSession(true).setAttribute(SessionValidityFilter.LAST_REAL_ACTIVITY,
@@ -132,9 +153,13 @@ public class MultiuserSecurityConfiguration {
                                     throttleService.recordFailure(request.getParameter("username"),
                                             addressResolver.resolve(request));
                                 }
-                                jsonError(response, objectMapper, 401, "invalid_credentials");
+                                errorWriter.write(request, response, HttpStatus.UNAUTHORIZED,
+                                        ApiErrorCode.AUTH_INVALID_CREDENTIALS, LegacyErrorAdapter.Shape.ERROR_FIELD,
+                                        "invalid_credentials", null);
                             } catch (RuntimeException unavailable) {
-                                jsonError(response, objectMapper, 503, "authentication_unavailable");
+                                errorWriter.write(request, response, HttpStatus.SERVICE_UNAVAILABLE,
+                                        ApiErrorCode.DEPENDENCY_UNAVAILABLE, LegacyErrorAdapter.Shape.ERROR_FIELD,
+                                        "authentication_unavailable", null);
                             }
                         }))
                 .logout(logout -> logout.logoutUrl("/auth/logout").invalidateHttpSession(true)
@@ -145,16 +170,20 @@ public class MultiuserSecurityConfiguration {
                             objectMapper.writeValue(response.getWriter(), Map.of("status", "logged_out"));
                         }))
                 .exceptionHandling(errors -> errors
-                        .authenticationEntryPoint((request, response, exception) -> jsonError(response,
-                                objectMapper, 401, "unauthorized"))
-                        .accessDeniedHandler((request, response, exception) -> jsonError(response,
-                                objectMapper, 403, "forbidden")))
-                .addFilterBefore(new RequestCorrelationFilter(addressResolver, auditRecorder),
-                        org.springframework.security.web.context.SecurityContextHolderFilter.class)
-                .addFilterBefore(new TrustedOriginFilter(trustedOrigins), CsrfFilter.class)
-                .addFilterBefore(new LoginRateLimitFilter(throttleService, objectMapper, addressResolver),
+                        .authenticationEntryPoint((request, response, exception) -> errorWriter.write(request,
+                                response, HttpStatus.UNAUTHORIZED, ApiErrorCode.AUTH_REQUIRED,
+                                LegacyErrorAdapter.Shape.ERROR_FIELD, "unauthorized", null))
+                        .accessDeniedHandler((request, response, exception) -> {
+                            boolean csrfFailure = exception instanceof org.springframework.security.web.csrf.CsrfException;
+                            errorWriter.write(request, response, HttpStatus.FORBIDDEN,
+                                    csrfFailure ? ApiErrorCode.SECURITY_CSRF_INVALID : ApiErrorCode.ACCESS_DENIED,
+                                    LegacyErrorAdapter.Shape.ERROR_FIELD,
+                                    csrfFailure ? "csrf_invalid" : "forbidden", null);
+                        }))
+                .addFilterBefore(new TrustedOriginFilter(trustedOrigins, errorWriter), CsrfFilter.class)
+                .addFilterBefore(new LoginRateLimitFilter(throttleService, addressResolver, errorWriter),
                         UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(new AccountActionRateLimitFilter(accountActionLimiter, addressResolver, objectMapper),
+                .addFilterBefore(new AccountActionRateLimitFilter(accountActionLimiter, addressResolver, errorWriter),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(new SessionValidityFilter(identities),
                         org.springframework.security.web.context.SecurityContextHolderFilter.class)
@@ -167,11 +196,4 @@ public class MultiuserSecurityConfiguration {
         return http.build();
     }
 
-    private static void jsonError(final jakarta.servlet.http.HttpServletResponse response,
-            final ObjectMapper mapper, final int status, final String code) throws java.io.IOException {
-        response.setStatus(status);
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.setCharacterEncoding("UTF-8");
-        mapper.writeValue(response.getWriter(), Map.of("error", code));
-    }
 }

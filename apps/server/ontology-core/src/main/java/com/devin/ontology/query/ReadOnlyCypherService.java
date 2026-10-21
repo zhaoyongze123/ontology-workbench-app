@@ -1,7 +1,9 @@
 package com.devin.ontology.query;
 
+import com.devin.ontology.common.exception.ApiErrorCode;
 import com.devin.ontology.common.enums.GraphTypeEnum;
 import com.devin.ontology.common.exception.ValidateException;
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.dao.GraphDao;
 import com.devin.ontology.domain.entity.Graph;
 import com.devin.ontology.domain.vo.CypherQueryVO;
@@ -26,7 +28,9 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.postgresql.util.PGobject;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.QueryTimeoutException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.PreparedStatementCreator;
 import org.springframework.jdbc.core.ResultSetExtractor;
@@ -71,7 +75,7 @@ public class ReadOnlyCypherService {
 
     public Collection<Map<String, Object>> query(final CypherQueryVO query) {
         if (query == null || query.getGraphId() == null || query.getGraphType() == null) {
-            throw new ValidateException("图谱编号和类型不能为空");
+            throw new ValidateException(ApiErrorCode.REQUEST_INVALID);
         }
         List<String> outputNames = validator.validateAndGetColumns(query.getCypher());
         try {
@@ -80,9 +84,13 @@ public class ReadOnlyCypherService {
             throw expected;
         } catch (DataAccessException | TransactionTimedOutException databaseFailure) {
             if (isQueryTimeout(databaseFailure)) {
-                throw new ValidateException("查询超过 5 秒限制");
+                throw new ValidateException(ApiErrorCode.QUERY_BUDGET_EXCEEDED, databaseFailure);
             }
-            throw new ValidateException("查询语法不受支持或执行失败");
+            if (isDependencyFailure(databaseFailure)) {
+                throw new OntologyApiException(ApiErrorCode.DEPENDENCY_UNAVAILABLE, databaseFailure);
+            }
+            // 未识别的数据库错误保留原始 cause 交给 HTTP 边界安全记录，不能伪装成用户语法错误。
+            throw databaseFailure;
         }
     }
 
@@ -105,26 +113,26 @@ public class ReadOnlyCypherService {
         try {
             actualType = GraphTypeEnum.valueOf(graph.getType());
         } catch (RuntimeException invalidStoredType) {
-            throw new ValidateException("图谱存储类型无效");
+            throw new OntologyApiException(ApiErrorCode.INTERNAL_ERROR, invalidStoredType);
         }
         if (actualType != query.getGraphType()) {
-            throw new ValidateException("请求图谱类型与实际图谱不匹配");
+            throw new ValidateException(ApiErrorCode.REQUEST_INVALID);
         }
 
         final long graphId;
         try {
             graphId = graph.getId().longValueExact();
         } catch (ArithmeticException | NullPointerException invalidId) {
-            throw new ValidateException("图谱编号超出支持范围");
+            throw new OntologyApiException(ApiErrorCode.INTERNAL_ERROR, invalidId);
         }
         final String graphName;
         try {
             graphName = AgeSql.graphName(actualType.getDbPrefix(), graphId);
         } catch (IllegalArgumentException invalidGraphId) {
-            throw new ValidateException("图谱编号无效");
+            throw new OntologyApiException(ApiErrorCode.INTERNAL_ERROR, invalidGraphId);
         }
         if (!(storageStrategy instanceof AgeStrategy ageStrategy)) {
-            throw new ValidateException("当前图存储不支持自由 Cypher 查询");
+            throw new ValidateException(ApiErrorCode.QUERY_EXECUTION_REJECTED);
         }
 
         // 先用应用默认 search_path 读取 og_graph/ACL；仅在 AGE 执行前收紧函数解析路径。
@@ -140,14 +148,15 @@ public class ReadOnlyCypherService {
             statement.setFetchSize(100);
             return statement;
         };
-        return jdbcTemplate.query(statementCreator, (ResultSetExtractor<Collection<Map<String, Object>>>) rows -> {
+        try {
+            return jdbcTemplate.query(statementCreator, (ResultSetExtractor<Collection<Map<String, Object>>>) rows -> {
             long totalBytes = 2; // JSON 数组的左右方括号
             List<Map<String, Object>> results = new ArrayList<>();
             int rowCount = 0;
             while (rows.next()) {
                 if (++rowCount > MAX_ROWS) {
                     cancelStatement(rows);
-                    throw new ValidateException("查询结果超过 1000 行上限");
+                    throw new ValidateException(ApiErrorCode.QUERY_RESULT_LIMIT_EXCEEDED);
                 }
                 Map<String, Object> rawRow = new LinkedHashMap<>();
                 for (int index = 0; index < outputNames.size(); index++) {
@@ -156,7 +165,7 @@ public class ReadOnlyCypherService {
                     int cellBytes = rawCellSize(value);
                     if (cellBytes > MAX_CELL_BYTES) {
                         cancelStatement(rows);
-                        throw new ValidateException("查询单元格超过 256 KiB 上限");
+                        throw new ValidateException(ApiErrorCode.QUERY_RESULT_LIMIT_EXCEEDED);
                     }
                     rawRow.put(rawName, value);
                 }
@@ -173,17 +182,24 @@ public class ReadOnlyCypherService {
                     // 以将要返回给调用方的 JSON 行计量，覆盖别名、转义和分隔符开销。
                     totalBytes += objectMapper.writeValueAsBytes(namedRow).length;
                 } catch (JsonProcessingException serializationFailure) {
-                    throw new ValidateException("查询结果无法序列化");
+                    throw new OntologyApiException(ApiErrorCode.INTERNAL_ERROR, serializationFailure);
                 }
                 if (rowCount > 1) totalBytes++; // JSON 数组中的行间逗号
                 if (totalBytes > MAX_RESULT_BYTES) {
                     cancelStatement(rows);
-                    throw new ValidateException("查询结果超过 2 MiB 上限");
+                    throw new ValidateException(ApiErrorCode.QUERY_RESULT_LIMIT_EXCEEDED);
                 }
                 results.add(namedRow);
             }
             return results;
-        });
+            });
+        } catch (DataAccessException databaseFailure) {
+            // 仅对 AGE 执行用户 Cypher 的 SQLSTATE 42601 归类为查询语法错误；其他 SQL 错误保留为内部故障。
+            if ("42601".equals(sqlState(databaseFailure))) {
+                throw new ValidateException(ApiErrorCode.QUERY_SYNTAX_INVALID, databaseFailure);
+            }
+            throw databaseFailure;
+        }
     }
 
     private void cancelStatement(final ResultSet rows) {
@@ -204,6 +220,26 @@ public class ReadOnlyCypherService {
             }
         }
         return false;
+    }
+
+    private boolean isDependencyFailure(final Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof DataAccessResourceFailureException || cause instanceof TransientDataAccessException) {
+                return true;
+            }
+            if (cause instanceof SQLException sqlException && sqlException.getSQLState() != null
+                    && sqlException.getSQLState().startsWith("08")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String sqlState(final Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sqlException) return sqlException.getSQLState();
+        }
+        return null;
     }
 
     private int rawCellSize(final Object value) {

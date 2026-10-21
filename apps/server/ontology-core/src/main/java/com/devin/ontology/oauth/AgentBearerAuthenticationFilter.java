@@ -26,13 +26,17 @@ public final class AgentBearerAuthenticationFilter extends OncePerRequestFilter 
     protected void doFilterInternal(final HttpServletRequest request, final HttpServletResponse response,
             final FilterChain chain) throws ServletException, IOException {
         String header = request.getHeader("Authorization");
-        if (header == null || !header.startsWith("Bearer ") || header.length() <= 7) {
-            unauthorized(response);
+        if (header == null || header.isBlank()) {
+            unauthorized(response, false);
+            return;
+        }
+        if (!header.startsWith("Bearer ") || header.length() <= 7) {
+            unauthorized(response, true);
             return;
         }
         Authentication authentication = tokens.authenticate(header.substring(7).trim());
         if (authentication == null) {
-            unauthorized(response);
+            unauthorized(response, true);
             return;
         }
         ((org.springframework.security.authentication.AbstractAuthenticationToken) authentication)
@@ -41,12 +45,12 @@ public final class AgentBearerAuthenticationFilter extends OncePerRequestFilter 
         chain.doFilter(request, response);
     }
 
-    private void unauthorized(final HttpServletResponse response) throws IOException {
+    private void unauthorized(final HttpServletResponse response, final boolean invalidToken) throws IOException {
         SecurityContextHolder.clearContext();
-        response.setHeader("WWW-Authenticate", "Bearer error=\"invalid_token\"");
+        response.setHeader("WWW-Authenticate", invalidToken ? "Bearer error=\"invalid_token\"" : "Bearer");
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType("application/json");
         response.setCharacterEncoding("UTF-8");
-        mapper.writeValue(response.getWriter(), Map.of("error", "invalid_token"));
+        mapper.writeValue(response.getWriter(), Map.of("error", invalidToken ? "invalid_token" : "unauthorized"));
     }
 }

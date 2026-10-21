@@ -1,8 +1,10 @@
 import { getProjectAccess, type ProjectAccess, type ProjectCapability } from './service';
+import { App } from 'antd';
 import { useEffect, useState } from 'react';
 
 /** 权限信息来自服务端 capability 响应；只用于界面呈现，后端仍是最终授权边界。 */
 export function useProjectAccess(projectId: string) {
+  const { message } = App.useApp();
   const [access, setAccess] = useState<ProjectAccess | null>(null);
   const [loading, setLoading] = useState(Boolean(projectId));
   const [error, setError] = useState('');
@@ -20,12 +22,14 @@ export function useProjectAccess(projectId: string) {
       .catch((reason) => {
         if (active) {
           setAccess(null);
-          setError((reason as Error)?.message || '无法读取项目权限');
+          const messageText = (reason as Error)?.message || '无法读取项目权限';
+          setError(messageText);
+          message.error(messageText);
         }
       })
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [projectId]);
+  }, [message, projectId]);
   const can = (capability: ProjectCapability) => Boolean(access?.capabilities?.includes(capability));
   return { access, loading, error, can };
 }

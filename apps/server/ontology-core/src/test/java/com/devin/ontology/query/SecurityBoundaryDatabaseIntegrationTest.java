@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.devin.ontology.OntologyServerApplication;
 import com.devin.ontology.common.enums.GraphTypeEnum;
+import com.devin.ontology.common.exception.ApiErrorCode;
 import com.devin.ontology.common.exception.ValidateException;
 import com.devin.ontology.dao.OrganizationDao;
 import com.devin.ontology.domain.dto.NodeDTO;
@@ -140,21 +141,19 @@ class SecurityBoundaryDatabaseIntegrationTest {
         CypherQueryVO query = query("UNWIND range(1, 1000) AS value RETURN value AS value");
         assertThat(cypher.query(query)).hasSize(1000);
         query.setCypher("UNWIND range(1, 1001) AS value RETURN value AS value");
-        assertThatThrownBy(() -> cypher.query(query)).isInstanceOf(ValidateException.class)
-                .hasMessageContaining("1000 行");
+        assertQueryFailure(query, ApiErrorCode.QUERY_RESULT_LIMIT_EXCEEDED);
 
         addNode("OversizeCell", "p".repeat(256 * 1024 + 1));
-        assertThatThrownBy(() -> cypher.query(query("MATCH (n:OversizeCell) RETURN n.payload AS payload")))
-                .isInstanceOf(ValidateException.class).hasMessageContaining("256 KiB");
+        assertQueryFailure(query("MATCH (n:OversizeCell) RETURN n.payload AS payload"),
+                ApiErrorCode.QUERY_RESULT_LIMIT_EXCEEDED);
 
         for (int i = 0; i < 9; i++) addNode("LargeResult", "r".repeat(240 * 1024));
-        assertThatThrownBy(() -> cypher.query(query("MATCH (n:LargeResult) RETURN n.payload AS payload")))
-                .isInstanceOf(ValidateException.class).hasMessageContaining("2 MiB");
+        assertQueryFailure(query("MATCH (n:LargeResult) RETURN n.payload AS payload"),
+                ApiErrorCode.QUERY_RESULT_LIMIT_EXCEEDED);
 
         String alias = "a".repeat(15_900);
         String queryText = "UNWIND range(1, 140) AS value RETURN value AS " + alias;
-        assertThatThrownBy(() -> cypher.query(query(queryText))).isInstanceOf(ValidateException.class)
-                .hasMessageContaining("2 MiB");
+        assertQueryFailure(query(queryText), ApiErrorCode.QUERY_RESULT_LIMIT_EXCEEDED);
         assertThat(jdbc.queryForObject("SELECT 1", Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SHOW transaction_read_only", String.class)).isEqualTo("off");
     }
@@ -281,8 +280,8 @@ class SecurityBoundaryDatabaseIntegrationTest {
             });
             try {
                 Throwable failure = blocked.get(8, TimeUnit.SECONDS);
-                assertThat(failure).isInstanceOf(ValidateException.class)
-                        .hasMessageContaining("5 秒限制");
+                assertThat(failure).isInstanceOfSatisfying(ValidateException.class,
+                        invalid -> assertThat(invalid.getApiErrorCode()).isEqualTo(ApiErrorCode.QUERY_BUDGET_EXCEEDED));
             } catch (Exception failure) {
                 throw new AssertionError("受控 AGE 锁等待未在查询超时内结束", failure);
             } finally {
@@ -324,6 +323,11 @@ class SecurityBoundaryDatabaseIntegrationTest {
         result.setGraphType(GraphTypeEnum.ONTOLOGY);
         result.setCypher(text);
         return result;
+    }
+
+    private void assertQueryFailure(final CypherQueryVO query, final ApiErrorCode expectedCode) {
+        assertThatThrownBy(() -> cypher.query(query)).isInstanceOfSatisfying(ValidateException.class,
+                invalid -> assertThat(invalid.getApiErrorCode()).isEqualTo(expectedCode));
     }
 
     private void authenticate(final String id) {

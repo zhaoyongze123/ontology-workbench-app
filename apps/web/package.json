@@ -13,7 +13,8 @@
     "postinstall": "max setup",
     "setup": "max setup",
     "preview": "max preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:errors": "node --test tests/apiError.test.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.0.1",

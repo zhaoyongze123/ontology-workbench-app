@@ -85,11 +85,12 @@ public class BootstrapService {
         }
 
         rejectExistingIdentityConflicts(input);
+        // Bootstrap 是停服维护命令；上面的事务级 advisory lock 已串行化初始化，无需给维护角色行更新权限。
         List<Long> legacyProjectIds = jdbcTemplate.query(
                 "SELECT id FROM ontology.og_organization o "
                         + "WHERE o.bootstrap_key IS NULL AND NOT EXISTS ("
                         + "SELECT 1 FROM ontology.og_project_member m "
-                        + "WHERE m.project_id = o.id AND m.role = 'OWNER') ORDER BY o.id FOR UPDATE",
+                        + "WHERE m.project_id = o.id AND m.role = 'OWNER') ORDER BY o.id",
                 (rs, rowNum) -> rs.getLong(1));
         String adminId = insertUsers(input.users());
         for (Long projectId : legacyProjectIds) {
@@ -160,8 +161,9 @@ public class BootstrapService {
     }
 
     private void rejectExistingIdentityConflicts(final BootstrapInput input) {
+        // 聚合显式引用受限角色获准读取的列，避免为冲突检测授予整表 SELECT。
         Integer foreignOwnerCount = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM ontology.og_organization o "
+                "SELECT COUNT(o.id) FROM ontology.og_organization o "
                         + "JOIN ontology.og_project_member m ON m.project_id = o.id "
                         + "WHERE o.bootstrap_key IS NULL AND m.role = 'OWNER'",
                 Integer.class);
@@ -170,7 +172,7 @@ public class BootstrapService {
         }
         for (BootstrapUser user : input.users()) {
             Integer count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM ontology.og_user WHERE username = ?", Integer.class,
+                    "SELECT COUNT(username) FROM ontology.og_user WHERE username = ?", Integer.class,
                     user.username());
             if (count != null && count > 0) {
                 throw new IllegalStateException("已有身份冲突，需人工复核: " + user.username());
@@ -178,7 +180,7 @@ public class BootstrapService {
         }
         for (BootstrapProject project : input.testProjects()) {
             Integer count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM ontology.og_organization WHERE bootstrap_key = ?",
+                    "SELECT COUNT(bootstrap_key) FROM ontology.og_organization WHERE bootstrap_key = ?",
                     Integer.class, project.key());
             if (count != null && count > 0) {
                 throw new IllegalStateException("已有项目身份冲突，需人工复核: " + project.key());
@@ -190,7 +192,7 @@ public class BootstrapService {
     private void verifyAppliedState(final BootstrapInput input, final List<Long> legacyProjectIds) {
         for (BootstrapUser user : input.users()) {
             Integer userCount = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM ontology.og_user u "
+                "SELECT COUNT(c.user_id) FROM ontology.og_user u "
                             + "JOIN ontology.og_password_credential c ON c.user_id = u.id "
                             + "WHERE u.username = ?",
                     Integer.class, user.username());
@@ -200,7 +202,7 @@ public class BootstrapService {
         }
         for (BootstrapProject project : input.testProjects()) {
             Integer projectCount = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM ontology.og_organization WHERE bootstrap_key = ?",
+                    "SELECT COUNT(bootstrap_key) FROM ontology.og_organization WHERE bootstrap_key = ?",
                     Integer.class, project.key());
             if (projectCount == null || projectCount != 1) {
                 throw new IllegalStateException("已初始化项目不存在，需人工复核: " + project.key());
@@ -208,7 +210,7 @@ public class BootstrapService {
         }
         for (Long projectId : legacyProjectIds) {
             Integer projectCount = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM ontology.og_organization WHERE id = ?", Integer.class, projectId);
+                    "SELECT COUNT(id) FROM ontology.og_organization WHERE id = ?", Integer.class, projectId);
             if (projectCount == null || projectCount != 1) {
                 throw new IllegalStateException("初始化时记录的旧项目不存在，需人工复核: " + projectId);
             }

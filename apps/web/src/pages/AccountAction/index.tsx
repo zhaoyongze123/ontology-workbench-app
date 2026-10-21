@@ -1,6 +1,7 @@
 import { appRelativePath } from '@/config/appBase';
 import { inspectAccountAction, submitAccountAction, type AccountActionPurpose } from '@/features/auth/accountActions';
 import { Button, Card, Form, Input, Result, Spin, Typography } from 'antd';
+import { normalizeApiError } from '@/features/errors/apiError';
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'umi';
 
@@ -11,6 +12,7 @@ const AccountActionPage: React.FC = () => {
   const [state, setState] = useState<'checking' | 'ready' | 'invalid' | 'done' | 'error'>('checking');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [inspectionError, setInspectionError] = useState('');
   const initialToken = useRef(typeof window === 'undefined' ? '' : new URLSearchParams(window.location.hash.slice(1)).get('token') || '');
 
   useEffect(() => {
@@ -25,7 +27,12 @@ const AccountActionPage: React.FC = () => {
       if (!result.valid) { setState('invalid'); return; }
       setPurpose(result.purpose);
       setState('ready');
-    }).catch(() => { if (active) setState('error'); });
+    }).catch((reason) => {
+      if (active) {
+        setInspectionError(normalizeApiError(reason).message);
+        setState('error');
+      }
+    });
     return () => { active = false; };
   }, []);
 
@@ -37,9 +44,14 @@ const AccountActionPage: React.FC = () => {
       setToken('');
       setState('done');
     } catch (reason) {
-      const status = (reason as any)?.response?.status;
-      setError(status === 400 || status === 409 ? '链接已失效或已使用，请联系系统管理员重新生成。'
-        : (reason as Error)?.message || '提交失败，请稍后重试。');
+      const appError = normalizeApiError(reason);
+      if (appError.errorCode === 'ACCOUNT_ACTION_INVALID') {
+        setToken('');
+        setState('invalid');
+      } else {
+        // 密码策略错误留在当前表单修正；网络失败提示结果未确认，不自动重放提交。
+        setError(appError.message);
+      }
     } finally { setBusy(false); }
   };
 
@@ -48,7 +60,8 @@ const AccountActionPage: React.FC = () => {
   if (state === 'invalid' || state === 'error' || state === 'done') return <main style={{ maxWidth: 480, margin: '10vh auto', padding: 16 }}>
     <Result status={state === 'done' ? 'success' : state === 'invalid' ? 'warning' : 'error'}
       title={state === 'done' ? '密码已设置' : state === 'invalid' ? '链接无效或已过期' : '暂时无法核验链接'}
-      subTitle={state === 'done' ? '请使用新密码登录。' : state === 'invalid' ? '请联系系统管理员重新生成链接。' : '请检查网络后重新打开链接。'}
+      subTitle={state === 'done' ? '请使用新密码登录。' : state === 'invalid' ? '链接已失效或已使用，请联系系统管理员重新生成。'
+        : inspectionError || '请检查网络后重新打开链接。'}
       extra={state === 'done' ? <Button type="primary" onClick={() => navigate(appRelativePath('/login'), { replace: true })}>前往登录</Button> : undefined} />
   </main>;
   return <main style={{ maxWidth: 440, margin: '10vh auto', padding: 16 }}>

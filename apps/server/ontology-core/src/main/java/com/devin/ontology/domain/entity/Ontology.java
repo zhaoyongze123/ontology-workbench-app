@@ -3,10 +3,9 @@ package com.devin.ontology.domain.entity;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.devin.ontology.common.constant.I18nConstant;
-import com.devin.ontology.common.exception.BusinessException;
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.common.utils.IdGenerator;
-import com.devin.ontology.common.utils.i18n.I18nUtils;
 import com.devin.ontology.dao.OntologyDao;
 import com.devin.ontology.dao.OntologyRelationshipDao;
 import lombok.Data;
@@ -114,7 +113,7 @@ public class Ontology implements Serializable {
         // 检查是否有重名本体关系
         OntologyRelationship relationship = relationshipDao.getByGraphIdAndName(getGraphId(), getName());
         if (Objects.nonNull(relationship)) {
-            throw new BusinessException(I18nUtils.getMessage(I18nConstant.NODE_RELATIONSHIP_NAME_DUPLICATE, getName()));
+            throw new OntologyApiException(ApiErrorCode.GRAPH_NODE_NAME_CONFLICT);
         }
     }
 }

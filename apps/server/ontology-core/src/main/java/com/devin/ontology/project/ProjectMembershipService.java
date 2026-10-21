@@ -1,5 +1,7 @@
 package com.devin.ontology.project;
 
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.common.exception.ValidateException;
 import com.devin.ontology.identity.InternalUser;
 import java.math.BigInteger;
@@ -64,7 +66,7 @@ public class ProjectMembershipService {
         validatePage(pageNum, pageSize);
         access.currentUser();
         if (query == null || query.trim().length() < 2) {
-            throw new ValidateException("搜索关键词至少需要两个字符");
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
         }
         String escaped = escapeLike(query.trim());
         String pattern = "%" + escaped + "%";
@@ -80,6 +82,9 @@ public class ProjectMembershipService {
 
     @Transactional
     public ProjectInvitationView invite(final BigInteger projectId, final ProjectInvitationRequest request) {
+        if (request == null || request.targetUserId() == null || request.role() == null) {
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
+        }
         InternalUser actor = access.currentUser();
         lockProject(projectId);
         access.requireProject(projectId, ProjectCapability.MANAGE_MEMBERS);
@@ -96,7 +101,7 @@ public class ProjectMembershipService {
         String target = request.targetUserId().trim();
         requireEnabledUser(target);
         if (memberExists(projectId, target)) {
-            throw new ValidateException("已有项目成员不能通过邀请修改角色");
+            throw new OntologyApiException(ApiErrorCode.PROJECT_ALREADY_MEMBER);
         }
         List<UUID> expiredInvitations = jdbc.query("SELECT id FROM ontology.og_project_invitation "
                         + "WHERE project_id = ? AND target_user_id = ? AND status = 'PENDING' AND expires_time <= NOW() FOR UPDATE",
@@ -109,7 +114,7 @@ public class ProjectMembershipService {
         Integer pending = jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_project_invitation "
                 + "WHERE project_id = ? AND target_user_id = ? AND status = 'PENDING'", Integer.class, projectId, target);
         if (pending != null && pending > 0) {
-            throw new ValidateException("该用户已有待处理邀请");
+            throw new OntologyApiException(ApiErrorCode.INVITATION_PENDING);
         }
         UUID id = UUID.randomUUID();
         jdbc.update("INSERT INTO ontology.og_project_invitation "
@@ -235,7 +240,7 @@ public class ProjectMembershipService {
         if (!actor.systemAdmin() && actorRole != ProjectRole.OWNER) throw denied();
         requireEnabledUser(targetId);
         ProjectRole targetRole = memberRoleOrNull(projectId, targetId);
-        if (targetRole == null) throw new ValidateException("所有者必须是当前项目成员");
+        if (targetRole == null) throw new OntologyApiException(ApiErrorCode.PROJECT_OWNER_CONFLICT);
         if (targetRole == ProjectRole.OWNER) return;
         String oldOwner = jdbc.query("SELECT user_id FROM ontology.og_project_member WHERE project_id = ? AND role = 'OWNER' FOR UPDATE",
                 (rs, n) -> rs.getString(1), projectId).stream().findFirst().orElseThrow(ProjectMembershipService::denied);
@@ -272,13 +277,13 @@ public class ProjectMembershipService {
     }
 
     private void validateGrantRole(final ProjectRole role) {
-        if (role == null || role == ProjectRole.OWNER) throw new ValidateException("不能通过成员邀请或角色修改授予 OWNER");
+        if (role == null || role == ProjectRole.OWNER) throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
     }
 
     private void requireEnabledUser(final String userId) {
         Boolean enabled = jdbc.query("SELECT enabled FROM ontology.og_user WHERE id = ? FOR UPDATE",
                 (rs, n) -> rs.getBoolean(1), userId).stream().findFirst().orElse(false);
-        if (!enabled) throw new ValidateException("目标用户不存在或未启用");
+        if (!enabled) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
     }
 
     private void lockProject(final BigInteger id) {
@@ -365,7 +370,7 @@ public class ProjectMembershipService {
     }
 
     private static void validatePage(final int page, final int size) {
-        if (page < 1 || size < 1 || size > MAX_PAGE_SIZE) throw new ValidateException("分页参数超出允许范围");
+        if (page < 1 || size < 1 || size > MAX_PAGE_SIZE) throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
     }
 
     static String escapeLike(final String value) {

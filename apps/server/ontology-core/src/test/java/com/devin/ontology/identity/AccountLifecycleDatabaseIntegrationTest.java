@@ -4,9 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.OntologyServerApplication;
 import com.devin.ontology.security.LoginUserPrincipal;
 import java.net.URI;
@@ -102,7 +108,7 @@ class AccountLifecycleDatabaseIntegrationTest {
         assertThat(authVersion(targetId)).isEqualTo(versionBeforeRequest);
         assertThat(accounts.inspectActionToken(resetToken).valid()).isTrue();
         assertThatThrownBy(() -> accounts.activate(resetToken, "incorrect purpose password"))
-                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+                .isInstanceOf(OntologyApiException.class);
         assertThat(accounts.inspectActionToken(resetToken).valid()).isTrue();
         assertThat(passwordEncoder.matches("correct horse battery staple", passwordHash(targetId))).isTrue();
         accounts.resetPassword(resetToken, "another correct horse battery");
@@ -110,7 +116,7 @@ class AccountLifecycleDatabaseIntegrationTest {
         assertThat(accounts.inspectActionToken(resetToken).valid()).isFalse();
         assertThat(passwordEncoder.matches("correct horse battery staple", passwordHash(targetId))).isFalse();
         assertThatThrownBy(() -> accounts.resetPassword(resetToken, "third correct horse battery"))
-                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+                .isInstanceOf(OntologyApiException.class);
     }
 
     @Test
@@ -132,6 +138,28 @@ class AccountLifecycleDatabaseIntegrationTest {
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
                         .jsonPath("$.error").value("method_not_allowed"));
+    }
+
+    @Test
+    void lastAdministratorHttpDisableKeepsTheLegacyConflictBody() throws Exception {
+        adminId = UUID.randomUUID().toString();
+        insertAdmin(adminId, "it_last_admin_http_");
+        String username = jdbc.queryForObject("SELECT username FROM ontology.og_user WHERE id = ?",
+                String.class, adminId);
+        var principal = new LoginUserPrincipal(adminId, username, "IT Admin", true, 0,
+                System.currentTimeMillis());
+        var authentication = UsernamePasswordAuthenticationToken.authenticated(
+                principal, null, java.util.List.of());
+
+        mvc.perform(patch("/admin/users/{userId}/enabled", adminId)
+                        .with(authentication(authentication))
+                        .with(csrf())
+                        .contentType("application/json")
+                        .accept("application/json")
+                        .content("{\"enabled\":false}"))
+                .andExpect(status().isConflict())
+                .andExpect(content().json("{\"error\":\"conflict\"}"))
+                .andExpect(jsonPath("$.success").doesNotExist());
     }
 
     @Test
@@ -159,7 +187,7 @@ class AccountLifecycleDatabaseIntegrationTest {
                 + "WHERE token_digest = ?", tokenDigest(expiredToken));
         assertThat(accounts.inspectActionToken(expiredToken).valid()).isFalse();
         assertThatThrownBy(() -> accounts.resetPassword(expiredToken, "valid length password one"))
-                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+                .isInstanceOf(OntologyApiException.class);
 
         String replacedToken = fragmentToken(accounts.issuePasswordResetLink(targetId));
         String currentToken = fragmentToken(accounts.issuePasswordResetLink(targetId));
@@ -240,7 +268,7 @@ class AccountLifecycleDatabaseIntegrationTest {
             start.await();
             accounts.activate(token, "race correct horse battery stable");
             return true;
-        } catch (org.springframework.web.server.ResponseStatusException expected) {
+        } catch (OntologyApiException expected) {
             return false;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();

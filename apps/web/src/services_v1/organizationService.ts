@@ -1,4 +1,5 @@
-import { request } from 'umi'; 
+import { request } from 'umi';
+import { localRequest } from '@/features/errors/localRequest';
 import {
   ApiResultVoid,
   ApiResultOrganizationVO,
@@ -19,7 +20,7 @@ export async function editOrganization (
   },
   options?: Record<string, any>,
 ) {
-  return request<ApiResultVoid>(`/api/v1/organization/edit`, {
+  return localRequest<ApiResultVoid>(`/api/v1/organization/edit`, {
     method: 'PUT',
     data: {
       ...data,
@@ -40,7 +41,7 @@ export async function saveOrganization (
   },
   options?: Record<string, any>,
 ) {
-  return request<ApiResultOrganizationVO>(`/api/v1/organization/save`, {
+  return localRequest<ApiResultOrganizationVO>(`/api/v1/organization/save`, {
     method: 'POST',
     data: {
       ...data,
@@ -59,7 +60,7 @@ export async function deleteOrganization (
   },
   options?: Record<string, any>,
 ) {
-  return request<ApiResultVoid>(`/api/v1/organization/delete`, {
+  return localRequest<ApiResultVoid>(`/api/v1/organization/delete`, {
     method: 'POST',
     params: {
       ...params,

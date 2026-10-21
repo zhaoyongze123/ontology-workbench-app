@@ -1,13 +1,11 @@
 package com.devin.ontology.service.impl;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.devin.ontology.common.constant.I18nConstant;
 import com.devin.ontology.common.enums.GraphTypeEnum;
-import com.devin.ontology.common.exception.BusinessException;
+import com.devin.ontology.common.exception.ApiErrorCode;
+import com.devin.ontology.common.exception.OntologyApiException;
 import com.devin.ontology.common.utils.BeanCopyUtils;
-import com.devin.ontology.common.utils.i18n.I18nUtils;
 import com.devin.ontology.common.utils.r.PageResult;
-import com.devin.ontology.common.utils.r.ResultEnum;
 import com.devin.ontology.dao.GraphDao;
 import com.devin.ontology.dao.OrganizationDao;
 import com.devin.ontology.domain.entity.Graph;
@@ -132,7 +130,7 @@ public class OrganizationServiceImpl implements OrganizationService {
         // 查询组织下是否含有图谱
         List<Graph> graphList = graphDao.getByOrganizationIds(Collections.singletonList(organizationId));
         if (!graphList.isEmpty()) {
-            throw new BusinessException(ResultEnum.ORGANIZATION_ERROR, I18nUtils.getMessage(I18nConstant.ORGANIZATION_HAVE_DEPENDENCY));
+            throw new OntologyApiException(ApiErrorCode.PROJECT_HAS_DEPENDENCIES);
         }
         organizationDao.deleteMemberships(organizationId);
         organizationDao.removeById(organizationId);
