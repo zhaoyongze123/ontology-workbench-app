@@ -2,6 +2,11 @@
 server:
   address: 127.0.0.1
   port: 13002
+  # Tomcat 只信任本机 Nginx，不能无条件采纳用户可伪造的转发头。
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      internal-proxies: '127\.0\.0\.1|::1'
 spring:
   datasource:
     url: ${ONTOLOGY_DB_URL}
