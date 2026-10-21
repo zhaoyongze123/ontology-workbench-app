@@ -6,6 +6,16 @@
 
 Java `ontology.security.public-origin` 是唯一公开 Origin，必须和打包配置 `serviceOrigin` 完全相同；只填写 origin，不包含 `/api/v1`。它用于 App Manifest/API URL、可信浏览器 Origin 和 Workbench OIDC callback 前缀。OAuth issuer 则由该 Origin 加上 `server.servlet.context-path` 组成（当前为 `/api/v1`），SAS 的授权、Token、撤销和 introspection endpoint 再相对 issuer 生成。当前 discovery URI 按 RFC 8414 为 `https://<origin>/.well-known/oauth-authorization-server/api/v1`；[nginx.example.conf](../../deploy/local/nginx.example.conf) 展示了将其精确转发到 Java context 内 metadata 路径的规则。私有运行配置按 [application.example.yaml](../../deploy/local/application.example.yaml) 准备，并仅从仓库外权限受限目录加载。服务端至少需要 `ONTOLOGY_PUBLIC_ORIGIN`、数据库连接变量及上游 Workbench OIDC client credentials；上游凭据不要复制到 App 配置或包内。
 
+在隔离数据库迁移和初始化完成后，从仓库根目录启动已构建的 Java 服务，必须显式启用 `multiuser`，不能用默认配置替代多用户验收：
+
+```sh
+java -jar apps/server/ontology-core/target/ontology-core-0.0.1.jar \
+  --spring.profiles.active=multiuser \
+  --spring.config.additional-location=file:/绝对路径/private/application.local.yaml
+```
+
+私有配置中的数据库应使用隔离副本的非超级用户账号；上游凭据核对完成后，将 `ontology.workbench.enabled` 设为 `true`。前端使用在 `apps/web` 执行 `MULTIUSER_BUILD=1 npm run build` 生成的 `dist-multiuser`，并将私有 Nginx 配置的静态文件目录指向该目录。Nginx 18083、Java 13002 是独立测试入口，不覆盖旧 18081/13001 服务。
+
 Java 管理员先创建 App OAuth client：display name `Ontology`、Workbench 固定 callback `https://app.workbench.aos.work/basilcraw/api/apps/oauth2/callback`、认证方式 body/`client_secret_post`、PKCE 开启，并包含 `profile`、`ontology.read`、`ontology.write`、`ontology.manage`。把新建结果仅存入本机私密 App 打包配置；旧 client 若 redirect 或 scopes 不符合，须登记新 client。WorkBench 固定 App callback 通常不随 Ontology 域名改变；Java 上游登录 OIDC callback 是 `${ONTOLOGY_PUBLIC_ORIGIN}/oidc/callback`，改域名时须同步 Workbench 登录 OIDC 配置并重新做真实登录回调验证。
 
 `serviceOrigin` 只能是纯 HTTPS origin。一次生成会产出版本、SHA-256、脱敏校验报告和管理员 ZIP：
@@ -85,7 +95,7 @@ Issue #18 的验收依赖真实 Workbench 授权和账号隔离，Issue #19 明�
 ## 用户最终 Workbench 联调步骤
 
 1. 运维确认服务 origin、HTTPS、Nginx 转发与 OIDC discovery/JWKS，再从受保护的 Java 运行配置启用上游 Workbench OIDC。实际更换域名时同步 `ONTOLOGY_PUBLIC_ORIGIN`、可信 Origin、`ontology.workbench.redirect-uri` 和 Workbench 登录 OIDC callback，重启 Java/Nginx 后以真实用户验证登录回跳。
-2. 管理员在 Java `/admin/oauth/clients` 新建 `Ontology` App client，登记正式固定 App callback、PKCE 和四个 scope。将响应里的 App client id/secret 放入仓库外的私有 package JSON；不要把 Java 上游 OIDC client secret 混进来。
+2. 管理员登录 `/ontology-management/admin/oauth-clients` 页面新建 `Ontology` App client（后端接口为 `/api/v1/admin/oauth/clients`），登记正式固定 App callback、PKCE 和四个 scope。将响应里的 App client id/secret 放入仓库外的私有 package JSON；不要把 Java 上游 OIDC client secret 混进来。
 3. 用工具生成 `0.2.0-rc.1` ZIP，记录 SHA-256。受限管理员检查 Manifest 与 hash，然后只通过 Workbench 管理入口上传；保存版本和 hash，不把 ZIP 分享给普通成员。
 4. 普通测试用户打开 Workbench App，完成 OAuth consent。观察回调、`getCurrentUser` 的 `id/username/name` 映射和一个只读 Action；用有/无项目、只读与可写身份分别验证 scope×项目权限矩阵。
 5. 等 access token 自然到期后触发一次请求，验证 Workbench 使用 refresh endpoint 轮换 refresh token、旧 token 不能复用。随后从 Workbench 断开连接，并分别重试旧 access token 和 refresh token，确认两者都失效；记录 HTTP 状态、脱敏请求路径和时间，不记录 Authorization header 或 token 内容。
