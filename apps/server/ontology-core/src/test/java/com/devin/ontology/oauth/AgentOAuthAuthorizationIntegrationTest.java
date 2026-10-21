@@ -18,6 +18,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -43,6 +44,7 @@ import org.springframework.test.context.DynamicPropertySource;
 @EnabledIfEnvironmentVariable(named = "ONTOLOGY_IT_JDBC_URL", matches = ".*ontology_multiuser_dev_20261020.*")
 class AgentOAuthAuthorizationIntegrationTest {
     private static final String REDIRECT_URI = "https://app.example.test/oidc/callback";
+    private static final String PUBLIC_ORIGIN = "https://ontology.example.test/";
 
     @LocalServerPort
     private int port;
@@ -84,6 +86,7 @@ class AgentOAuthAuthorizationIntegrationTest {
         // 本机 HTTP 集成测试不能发送 Secure Cookie；生产仍由正式环境配置 Secure + SameSite=None。
         registry.add("ontology.security.cookie-secure", () -> "false");
         registry.add("ontology.security.cookie-same-site", () -> "Lax");
+        registry.add("ontology.security.public-origin", () -> PUBLIC_ORIGIN);
     }
 
     @BeforeEach
@@ -143,6 +146,23 @@ class AgentOAuthAuthorizationIntegrationTest {
             jdbc.update("DELETE FROM ontology.og_password_credential WHERE user_id = ?", outsiderUserId);
             jdbc.update("DELETE FROM ontology.og_user WHERE id = ?", outsiderUserId);
         }
+    }
+
+    @Test
+    void authorizationServerMetadataUsesPublicOriginAndServletContextPath() throws Exception {
+        HttpResponse<String> response = get("/.well-known/oauth-authorization-server");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode metadata = mapper.readTree(response.body());
+        String issuer = PUBLIC_ORIGIN.replaceAll("/+$", "") + "/api/v1";
+        assertThat(metadata.path("issuer").asText()).isEqualTo(issuer);
+        assertThat(metadata.path("authorization_endpoint").asText())
+                .isEqualTo(issuer + "/oidc/app/authorize");
+        assertThat(metadata.path("token_endpoint").asText()).isEqualTo(issuer + "/oidc/app/token");
+        assertThat(metadata.path("revocation_endpoint").asText()).isEqualTo(issuer + "/oidc/app/revoke");
+        // Spring Authorization Server 默认启用并声明 introspection；此断言锁定它的实际 context 路径。
+        assertThat(metadata.path("introspection_endpoint").asText())
+                .isEqualTo(issuer + "/oauth2/introspect");
     }
 
     @Test
@@ -355,6 +375,187 @@ class AgentOAuthAuthorizationIntegrationTest {
                         + "WHERE event_type = 'SECURITY_ACCESS_DENIED' AND actor_user_id = ? "
                         + "AND details_json->>'path' = '/api/v1/admin/audit-events'", Long.class, viewerUserId))
                 .isEqualTo(1L);
+    }
+
+    @Test
+    void anonymousAuthorizeRedirectsToLoginAndRfc7009RevokesTokensWithAndWithoutHint() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> loggedIn = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(loggedIn.statusCode()).isEqualTo(200);
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "RFC 7009 revoke probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        JsonNode clientBody = mapper.readTree(created.body());
+        String clientId = clientBody.path("clientId").asText();
+        String clientSecret = clientBody.path("clientSecret").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+
+        String state = "anonymous-state-" + UUID.randomUUID();
+        String verifier = randomVerifier();
+        String query = form(List.of(Map.entry("response_type", "code"), Map.entry("client_id", clientId),
+                Map.entry("redirect_uri", REDIRECT_URI), Map.entry("scope", "profile"),
+                Map.entry("state", state), Map.entry("code_challenge", challenge(verifier)),
+                Map.entry("code_challenge_method", "S256")));
+        java.net.http.HttpClient anonymousClient = java.net.http.HttpClient.newBuilder()
+                .followRedirects(java.net.http.HttpClient.Redirect.NEVER).build();
+        HttpResponse<String> anonymousAuthorize = get(anonymousClient, "/oidc/app/authorize?" + query);
+        assertThat(anonymousAuthorize.statusCode()).isBetween(300, 399);
+        URI login = resolveLocation(anonymousAuthorize);
+        assertThat(login.getPath()).isEqualTo("/ontology-management/login");
+        assertThat(queryParameters(login.getRawQuery()).get("oauth_return"))
+                .isEqualTo("/api/v1/oidc/app/authorize?" + query);
+        HttpResponse<String> anonymousPost = send(anonymousClient, formRequest("/oidc/app/authorize", null,
+                List.of(Map.entry("client_id", clientId), Map.entry("state", state))));
+        assertThat(anonymousPost.statusCode()).isBetween(400, 499);
+
+        JsonNode accessGrant = issueTokenPair(clientId, clientSecret);
+        String accessToken = accessGrant.path("access_token").asText();
+        String accessAuthorizationId = authorizationIdForToken("access_token_digest", accessToken);
+        HttpResponse<String> revokeAccess = postForm("/oidc/app/revoke", null,
+                List.of(Map.entry("client_id", clientId), Map.entry("client_secret", clientSecret),
+                        Map.entry("token", accessToken)));
+        assertThat(revokeAccess.statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT access_active FROM ontology.og_app_authorization WHERE id = ?",
+                Boolean.class, accessAuthorizationId)).isFalse();
+        assertThat(getBearer(accessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+        assertThat(rejectedRefresh(clientId, clientSecret, accessGrant.path("refresh_token").asText()))
+                .isEqualTo(400);
+
+        JsonNode expiredAccessGrant = issueTokenPair(clientId, clientSecret);
+        String expiredAccessToken = expiredAccessGrant.path("access_token").asText();
+        String expiredAuthorizationId = authorizationIdForToken("access_token_digest", expiredAccessToken);
+        jdbc.update("UPDATE ontology.og_app_authorization SET access_issued_at = NOW() - INTERVAL '16 minutes', "
+                + "access_expires_at = NOW() - INTERVAL '1 second' "
+                + "WHERE id = ?", expiredAuthorizationId);
+        HttpResponse<String> expiredAccessRevoke = postForm("/oidc/app/revoke", null,
+                List.of(Map.entry("client_id", clientId), Map.entry("client_secret", clientSecret),
+                        Map.entry("token", expiredAccessToken)));
+        assertThat(expiredAccessRevoke.statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT revoked_at IS NOT NULL AND access_active = FALSE "
+                + "FROM ontology.og_app_authorization WHERE id = ?", Boolean.class, expiredAuthorizationId)).isTrue();
+        assertThat(rejectedRefresh(clientId, clientSecret, expiredAccessGrant.path("refresh_token").asText()))
+                .isEqualTo(400);
+
+        JsonNode refreshGrant = issueTokenPair(clientId, clientSecret);
+        String refreshAccessToken = refreshGrant.path("access_token").asText();
+        String refreshToken = refreshGrant.path("refresh_token").asText();
+        String refreshAuthorizationId = authorizationIdForToken("refresh_token_digest", refreshToken);
+        assertThat(jdbc.queryForObject("SELECT access_token_digest FROM ontology.og_app_authorization WHERE id = ?",
+                String.class, refreshAuthorizationId)).isEqualTo(sha256(refreshAccessToken));
+        HttpResponse<String> revokeRefresh = postForm("/oidc/app/revoke", null,
+                List.of(Map.entry("client_id", clientId), Map.entry("client_secret", clientSecret),
+                        Map.entry("token", refreshToken), Map.entry("token_type_hint", "refresh_token")));
+        assertThat(revokeRefresh.statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT access_token_digest FROM ontology.og_app_authorization WHERE id = ?",
+                String.class, refreshAuthorizationId)).isEqualTo(sha256(refreshAccessToken));
+        assertThat(jdbc.queryForObject("SELECT status FROM ontology.og_app_refresh_token_history "
+                        + "WHERE token_digest = ?", String.class, sha256(refreshToken)))
+                .isEqualTo("REVOKED");
+        assertThat(jdbc.queryForObject("SELECT revoked_at IS NOT NULL FROM ontology.og_app_authorization "
+                + "WHERE id = ?", Boolean.class, refreshAuthorizationId)).isTrue();
+        assertThat(getBearer(refreshGrant.path("access_token").asText(), "/oidc/app/userinfo", null)
+                .statusCode()).isEqualTo(401);
+        assertThat(rejectedRefresh(clientId, clientSecret, refreshToken)).isEqualTo(400);
+
+        JsonNode mismatchedHintGrant = issueTokenPair(clientId, clientSecret);
+        String mismatchedAccessToken = mismatchedHintGrant.path("access_token").asText();
+        String mismatchedAuthorizationId = authorizationIdForToken("access_token_digest", mismatchedAccessToken);
+        HttpResponse<String> mismatchedHint = postForm("/oidc/app/revoke", null,
+                List.of(Map.entry("client_id", clientId), Map.entry("client_secret", clientSecret),
+                        Map.entry("token", mismatchedAccessToken), Map.entry("token_type_hint", "refresh_token")));
+        assertThat(mismatchedHint.statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT revoked_at IS NOT NULL FROM ontology.og_app_authorization "
+                + "WHERE id = ?", Boolean.class, mismatchedAuthorizationId)).isTrue();
+        assertThat(rejectedRefresh(clientId, clientSecret, mismatchedHintGrant.path("refresh_token").asText()))
+                .isEqualTo(400);
+
+        JsonNode racingGrant = issueTokenPair(clientId, clientSecret);
+        String racingAccessToken = racingGrant.path("access_token").asText();
+        String racingRefreshToken = racingGrant.path("refresh_token").asText();
+        String racingAuthorizationId = authorizationIdForToken("refresh_token_digest", racingRefreshToken);
+        HttpRequest racingRefreshRequest = formRequest("/oidc/app/token", null,
+                List.of(Map.entry("grant_type", "refresh_token"), Map.entry("client_id", clientId),
+                        Map.entry("client_secret", clientSecret), Map.entry("refresh_token", racingRefreshToken)));
+        HttpRequest racingRevokeRequest = formRequest("/oidc/app/revoke", null,
+                List.of(Map.entry("client_id", clientId), Map.entry("client_secret", clientSecret),
+                        Map.entry("token", racingRefreshToken)));
+        CompletableFuture<HttpResponse<String>> racingRefresh = client.sendAsync(racingRefreshRequest,
+                HttpResponse.BodyHandlers.ofString());
+        CompletableFuture<HttpResponse<String>> racingRevoke = client.sendAsync(racingRevokeRequest,
+                HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> racingRefreshResponse = racingRefresh.get(20, TimeUnit.SECONDS);
+        HttpResponse<String> racingRevokeResponse = racingRevoke.get(20, TimeUnit.SECONDS);
+        assertThat(racingRevokeResponse.statusCode()).isEqualTo(200);
+        assertThat(racingRefreshResponse.statusCode()).isIn(200, 400);
+        assertThat(jdbc.queryForObject("SELECT revoked_at IS NOT NULL AND access_active = FALSE "
+                + "FROM ontology.og_app_authorization WHERE id = ?", Boolean.class, racingAuthorizationId)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_refresh_token_history "
+                + "WHERE authorization_id = ? AND status = 'ACTIVE'", Long.class, racingAuthorizationId)).isZero();
+        assertThat(getBearer(racingAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+        if (racingRefreshResponse.statusCode() == 200) {
+            JsonNode raced = mapper.readTree(racingRefreshResponse.body());
+            assertThat(getBearer(raced.path("access_token").asText(), "/oidc/app/userinfo", null).statusCode())
+                    .isEqualTo(401);
+            assertThat(rejectedRefresh(clientId, clientSecret, raced.path("refresh_token").asText())).isEqualTo(400);
+        }
+
+        jdbc.update("UPDATE ontology.og_user SET auth_version = auth_version + 1 WHERE id = ?", userId);
+        HttpResponse<String> staleSessionAuthorize = get("/oidc/app/authorize?" + query);
+        assertThat(staleSessionAuthorize.statusCode()).isBetween(300, 399);
+        assertThat(resolveLocation(staleSessionAuthorize).getPath())
+                .isEqualTo("/ontology-management/login");
+    }
+
+    private int rejectedRefresh(final String clientId, final String clientSecret, final String refreshToken)
+            throws Exception {
+        return postForm("/oidc/app/token", null,
+                List.of(Map.entry("grant_type", "refresh_token"), Map.entry("client_id", clientId),
+                        Map.entry("client_secret", clientSecret), Map.entry("refresh_token", refreshToken)))
+                .statusCode();
+    }
+
+    private JsonNode issueTokenPair(final String clientId, final String clientSecret) throws Exception {
+        String verifier = randomVerifier();
+        String state = "revoke-state-" + UUID.randomUUID();
+        String query = form(List.of(Map.entry("response_type", "code"), Map.entry("client_id", clientId),
+                Map.entry("redirect_uri", REDIRECT_URI), Map.entry("scope", "profile"),
+                Map.entry("state", state), Map.entry("code_challenge", challenge(verifier)),
+                Map.entry("code_challenge_method", "S256")));
+        HttpResponse<String> authorize = get("/oidc/app/authorize?" + query);
+        URI next = resolveLocation(authorize);
+        String code;
+        if (isLocalTestEndpoint(next)) {
+            // 首次授权会进入本机 consent；已有 consent 时 SAS 会直接跳回 callback。
+            HttpResponse<String> consent = send(HttpRequest.newBuilder(next).GET().build());
+            assertThat(consent.statusCode()).isEqualTo(200);
+            String consentState = queryParameters(next.getRawQuery()).get("state");
+            String csrf = csrfToken();
+            HttpResponse<String> approved = postForm("/oidc/app/authorize", csrf,
+                    List.of(Map.entry("client_id", clientId), Map.entry("state", consentState),
+                            Map.entry("user_oauth_approval", "true"), Map.entry("scope", "profile")));
+            code = callbackCode(resolveLocation(approved), state);
+        } else {
+            // 自动同意的回调只从 Location 读取 code，测试禁止访问 callback 域名。
+            code = callbackCode(next, state);
+        }
+        HttpResponse<String> response = postForm("/oidc/app/token", null,
+                List.of(Map.entry("grant_type", "authorization_code"), Map.entry("client_id", clientId),
+                        Map.entry("client_secret", clientSecret), Map.entry("redirect_uri", REDIRECT_URI),
+                        Map.entry("code", code), Map.entry("code_verifier", verifier)));
+        assertThat(response.statusCode()).isEqualTo(200);
+        return mapper.readTree(response.body());
+    }
+
+    private String authorizationIdForToken(final String column, final String token) throws Exception {
+        if (!Set.of("access_token_digest", "refresh_token_digest").contains(column)) {
+            throw new IllegalArgumentException("unsupported token column");
+        }
+        return jdbc.queryForObject("SELECT id FROM ontology.og_app_authorization WHERE " + column + " = ?",
+                String.class, sha256(token));
     }
 
     @Test
@@ -710,7 +911,27 @@ class AgentOAuthAuthorizationIntegrationTest {
 
     private HttpResponse<String> send(final java.net.http.HttpClient sessionClient, final HttpRequest request)
             throws IOException, InterruptedException {
+        if (!isLocalTestEndpoint(request.uri())) {
+            throw new AssertionError("OAuth integration test blocked a non-local HTTP request: " + request.uri());
+        }
         return sessionClient.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private boolean isLocalTestEndpoint(final URI value) {
+        return "http".equalsIgnoreCase(value.getScheme()) && "127.0.0.1".equals(value.getHost())
+                && value.getPort() == port && value.getPath().startsWith("/api/v1/");
+    }
+
+    private String callbackCode(final URI callback, final String expectedState) {
+        URI expected = URI.create(REDIRECT_URI);
+        assertThat(callback.getScheme()).isEqualTo(expected.getScheme());
+        assertThat(callback.getHost()).isEqualTo(expected.getHost());
+        assertThat(callback.getPort()).isEqualTo(expected.getPort());
+        assertThat(callback.getPath()).isEqualTo(expected.getPath());
+        Map<String, String> parameters = queryParameters(callback.getRawQuery());
+        assertThat(parameters.get("state")).isEqualTo(expectedState);
+        assertThat(parameters.get("code")).isNotBlank();
+        return parameters.get("code");
     }
 
     private URI uri(final String path) {

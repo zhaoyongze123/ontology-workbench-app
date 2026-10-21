@@ -132,6 +132,14 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
         String oldRefreshDigest = jdbc.queryForObject("SELECT refresh_token_digest "
                 + "FROM ontology.og_app_authorization WHERE id = ? FOR UPDATE", String.class, authorization.getId());
         String newRefreshDigest = digest(refreshValue);
+        // 本应用按授权族撤销：RFC 7009 收到 access/refresh token revoke 后，不能留下仍可刷新的半授权。
+        // 只识别这次协议对象里的访问/刷新令牌失效，授权码消费本身不属于撤销。
+        boolean accessRevoked = access != null && access.isInvalidated() && accessValue != null;
+        boolean refreshRevoked = refresh != null && refresh.isInvalidated() && refreshValue != null;
+        if (accessRevoked || refreshRevoked) {
+            revoke(authorization.getId(), "APP_TOKEN_REVOKED");
+            return;
+        }
         if (oldRefreshDigest != null && !oldRefreshDigest.equals(newRefreshDigest)) {
             jdbc.update("UPDATE ontology.og_app_refresh_token_history SET status = 'REPLACED', "
                             + "replacement_digest = ?, replaced_at = NOW() "
@@ -173,16 +181,41 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
     @Override
     public OAuth2Authorization findById(final String id) {
         return jdbc.query(baseSelect() + " WHERE a.id = ?", ROW_MAPPER, id)
-                .stream().findFirst().map(row -> build(row, null, null)).orElse(null);
+                .stream().findFirst().map(row -> build(row, null, null, false)).orElse(null);
     }
 
     @Override
     @Transactional
-    public OAuth2Authorization findByToken(final String token, final OAuth2TokenType tokenType) {
-        if (token == null || token.isBlank() || tokenType == null) return null;
+    public OAuth2Authorization findByToken(final String token, OAuth2TokenType tokenType) {
+        if (token == null || token.isBlank()) return null;
+        // 本地 SAS 1.5.8 撤销 Provider 固定以 null 类型查找；这种查找只供 RFC 7009
+        // revoke 使用，允许过期 access token 被定位以撤销整个授权族。Bearer 认证始终传明确类型并检查过期。
+        boolean revocationLookup = tokenType == null;
         String tokenDigest = digest(token);
         AuthorizationRow row;
-        if (AUTHORIZATION_CODE.equals(tokenType)) {
+        if (tokenType == null) {
+            // RFC 7009 客户端通常省略 token_type_hint；仅按摘要定位，不走刷新校验，避免把撤销查询
+            // 误判成 refresh reuse 并触发额外撤销副作用。
+            row = queryByDigest("a.access_token_digest", tokenDigest);
+            if (row != null) tokenType = OAuth2TokenType.ACCESS_TOKEN;
+            else {
+                row = queryByDigest("a.refresh_token_digest", tokenDigest);
+                if (row != null) tokenType = OAuth2TokenType.REFRESH_TOKEN;
+                else {
+                    // 如果 refresh 与 revoke 并发且 refresh 先轮换，旧 digest 已不在授权主行；
+                    // 通过历史表仅定位该授权族，供 RFC 7009 撤销，不触发 refresh reuse 逻辑。
+                    var priorRefresh = jdbc.query("SELECT authorization_id FROM ontology.og_app_refresh_token_history "
+                                    + "WHERE token_digest = ? AND status = 'REPLACED'",
+                            (rs, rowNum) -> rs.getString(1), tokenDigest).stream().findFirst().orElse(null);
+                    if (priorRefresh != null && lockAuthorization(priorRefresh)) {
+                        row = jdbc.query(baseSelect() + " WHERE a.id = ? FOR UPDATE OF a",
+                                ROW_MAPPER, priorRefresh).stream().findFirst().orElse(null);
+                        if (row != null) tokenType = OAuth2TokenType.REFRESH_TOKEN;
+                    }
+                }
+            }
+            if (row == null) return null;
+        } else if (AUTHORIZATION_CODE.equals(tokenType)) {
             row = queryByDigest("a.code_digest", tokenDigest);
         } else if (CONSENT_STATE.equals(tokenType)) {
             row = queryByDigest("a.consent_state_digest", tokenDigest);
@@ -232,7 +265,8 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
             if (consumed != 1) return null;
         }
         if (OAuth2TokenType.ACCESS_TOKEN.equals(tokenType)
-                && (!row.accessActive() || row.accessExpiresAt() == null || !row.accessExpiresAt().isAfter(Instant.now()))) {
+                && (!row.accessActive() || (!revocationLookup
+                        && (row.accessExpiresAt() == null || !row.accessExpiresAt().isAfter(Instant.now()))))) {
             return null;
         }
         if (OAuth2TokenType.REFRESH_TOKEN.equals(tokenType)
@@ -240,7 +274,7 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
             revoke(row.id(), "APP_REFRESH_TOKEN_EXPIRED");
             return null;
         }
-        return build(row, token, tokenType);
+        return build(row, token, tokenType, revocationLookup);
     }
 
     @Transactional
@@ -267,7 +301,7 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
     }
 
     private OAuth2Authorization build(final AuthorizationRow row, final String presentedToken,
-            final OAuth2TokenType presentedType) {
+            final OAuth2TokenType presentedType, final boolean revocationLookup) {
         RegisteredClient client = clients.findByClientId(row.clientId());
         if (client == null) return null;
         InternalUser user = identities.findById(row.userId()).orElse(null);
@@ -300,6 +334,14 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
             builder.accessToken(access);
         }
         if (presentedType != null && OAuth2TokenType.REFRESH_TOKEN.equals(presentedType)) {
+            if (revocationLookup) {
+                // SAS 的 Builder.invalidate(refresh) 会同步失效 access token，并假定授权对象中存在它。
+                // 持久层只保存摘要，撤销查询无法还原原 access 值；此占位对象仅用于撤销上下文，
+                // save() 识别失效标记后会先撤销整组授权并立即返回，不会把占位值写入数据库。
+                String revokeOnlyAccessValue = "revocation-only:" + row.id();
+                builder.accessToken(new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER,
+                        revokeOnlyAccessValue, row.accessIssuedAt(), row.accessExpiresAt(), parseScopes(row.scopes())));
+            }
             builder.refreshToken(new OAuth2RefreshToken(presentedToken, row.refreshIssuedAt(), row.refreshExpiresAt()));
         }
         return builder.build();
@@ -352,7 +394,7 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
                 "a.refresh_token_digest").contains(column)) {
             throw new IllegalArgumentException("不支持的 OAuth token 类型");
         }
-        return jdbc.query(baseSelect() + " WHERE " + column + " = ? FOR UPDATE", ROW_MAPPER, digest)
+        return jdbc.query(baseSelect() + " WHERE " + column + " = ? FOR UPDATE OF a", ROW_MAPPER, digest)
                 .stream().findFirst().orElse(null);
     }
 

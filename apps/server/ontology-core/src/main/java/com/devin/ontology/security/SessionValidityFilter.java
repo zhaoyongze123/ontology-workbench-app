@@ -14,14 +14,14 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /** 每次请求核验账号状态，并按真实业务活动维护空闲超时。 */
-final class SessionValidityFilter extends OncePerRequestFilter {
+public final class SessionValidityFilter extends OncePerRequestFilter {
     static final String LAST_REAL_ACTIVITY = SessionValidityFilter.class.getName() + ".lastRealActivity";
     static final long IDLE_LIMIT_MILLIS = 30L * 60 * 1000;
     static final long ABSOLUTE_LIMIT_MILLIS = 8L * 60 * 60 * 1000;
 
     private final IdentityRepository identities;
 
-    SessionValidityFilter(final IdentityRepository identities) {
+    public SessionValidityFilter(final IdentityRepository identities) {
         this.identities = identities;
     }
 
