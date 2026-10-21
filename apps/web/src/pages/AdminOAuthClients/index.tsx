@@ -54,6 +54,30 @@ type CreateClientFields = {
   scopes: string[];
 };
 
+type PendingCreateOutcome = {
+  values: CreateClientFields;
+  existingClientIds: string[];
+};
+
+function isCompleteClientList(value: unknown): value is AppClient[] {
+  if (!Array.isArray(value)) return false;
+  if (
+    !value.every(
+      (client) =>
+        client !== null &&
+        typeof client === 'object' &&
+        typeof client.id === 'string' &&
+        client.id.length > 0 &&
+        typeof client.displayName === 'string' &&
+        typeof client.redirectUri === 'string',
+    )
+  ) {
+    return false;
+  }
+  const ids = value.map((client) => client?.id);
+  return new Set(ids).size === ids.length;
+}
+
 async function copyValue(value: string): Promise<void> {
   if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
   await navigator.clipboard.writeText(value);
@@ -78,7 +102,7 @@ const AdminOAuthClientsPage: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [checkingCreateOutcome, setCheckingCreateOutcome] = useState(false);
   const [createOutcomeUnknown, setCreateOutcomeUnknown] =
-    useState<CreateClientFields>();
+    useState<PendingCreateOutcome>();
   const [createOutcomeChecked, setCreateOutcomeChecked] = useState(false);
   const [createError, setCreateError] = useState('');
   const [created, setCreated] = useState<CreatedAppClient>();
@@ -96,6 +120,9 @@ const AdminOAuthClientsPage: React.FC = () => {
     setLoadError('');
     try {
       const result = await getOAuthClients();
+      if (!isCompleteClientList(result)) {
+        throw new Error('客户端列表响应不完整');
+      }
       if (sequence !== requestSequence.current) return;
       setItems(result || []);
       setHasLoaded(true);
@@ -148,16 +175,18 @@ const AdminOAuthClientsPage: React.FC = () => {
 
   const verifyCreateOutcome = async () => {
     if (!createOutcomeUnknown) return;
-    const attempted = createOutcomeUnknown;
+    const { values: attempted, existingClientIds } = createOutcomeUnknown;
     setCheckingCreateOutcome(true);
     try {
       const refreshed = await load();
-      const match = refreshed?.find(
+      const matches = refreshed?.filter(
         (client) =>
+          !existingClientIds.includes(client.id) &&
           client.displayName === attempted.displayName &&
           client.redirectUri === attempted.redirectUri,
       );
-      if (match) {
+      if (matches?.length === 1) {
+        const match = matches[0];
         setCreateOutcomeUnknown(undefined);
         setCreateOpen(false);
         setCreateError('');
@@ -165,12 +194,25 @@ const AdminOAuthClientsPage: React.FC = () => {
         setWriteNotice({
           type: 'warning',
           client: match,
-          message: `已找到匹配的客户端“${match.displayName}”，但创建响应未能确认，Secret 无法再次取回。请停用该记录并重新注册以生成新的 Secret。`,
+          message: `发现一条提交后新增的匹配客户端“${match.displayName}”，但无法确认它一定由本次请求创建，且 Secret 无法再次取回。请先查看这条新增记录，再自行决定后续操作。`,
         });
-      } else if (refreshed) {
+      } else if (matches?.length === 0) {
+        const oldMatch = refreshed?.some(
+          (client) =>
+            existingClientIds.includes(client.id) &&
+            client.displayName === attempted.displayName &&
+            client.redirectUri === attempted.redirectUri,
+        );
         setCreateOutcomeChecked(true);
         setCreateError(
-          '已刷新完整客户端列表，未找到名称和回调地址均匹配的记录。没有自动重试；请确认列表已更新后再由你决定是否再次提交。',
+          oldMatch
+            ? '核对列表中只有创建前已存在的同名同回调客户端，未发现本次提交后的新增匹配记录。不能据此判定创建成功；没有自动重试，请确认列表已更新后再由你决定是否再次提交。'
+            : '已刷新完整客户端列表，未找到提交后新增的匹配记录。不能据此判定创建成功；没有自动重试，请确认列表已更新后再由你决定是否再次提交。',
+        );
+      } else if (matches && matches.length > 1) {
+        setCreateOutcomeChecked(false);
+        setCreateError(
+          `发现 ${matches.length} 条提交后新增的匹配客户端，无法唯一确认本次请求对应哪条记录。Secret 无法再次取回；请逐条核对，不要据此停用旧客户端或自动重试。`,
         );
       }
     } finally {
@@ -210,6 +252,21 @@ const AdminOAuthClientsPage: React.FC = () => {
   const saveCreatedClient = async (values: CreateClientFields) => {
     setCreating(true);
     setCreateError('');
+    let existingClientIds: string[];
+    try {
+      // Secret 只返回一次；先记录完整列表的 ID，避免把同名旧客户端误判为本次创建。
+      const snapshot = await getOAuthClients();
+      if (!isCompleteClientList(snapshot)) {
+        throw new Error('客户端列表响应不完整');
+      }
+      existingClientIds = snapshot.map((client) => client.id);
+    } catch {
+      setCreateError(
+        '提交前未能完整读取客户端列表，本次未发送创建请求。请刷新列表后再试。',
+      );
+      setCreating(false);
+      return;
+    }
     try {
       const result = await createOAuthClient(values);
       setCreated(result);
@@ -230,7 +287,7 @@ const AdminOAuthClientsPage: React.FC = () => {
         setCreateOpen(false);
         setLoadError(appError.message);
       } else if (appError.writeOutcomeUnknown) {
-        setCreateOutcomeUnknown(values);
+        setCreateOutcomeUnknown({ values, existingClientIds });
         setCreateOutcomeChecked(false);
         setCreateError(
           `${appError.message} 请先刷新客户端列表核实是否已创建，不要立即重复提交。`,

@@ -58,6 +58,15 @@ const clients = [
     enabled: false,
     createdAt: "2026-10-20T02:00:00Z",
   },
+  {
+    id: "c-existing-match",
+    clientId: "ontology_existing_same_name",
+    displayName: "新 Workbench 客户端",
+    redirectUri: "https://app.example.com/oidc/callback",
+    scopes: ["profile"],
+    enabled: true,
+    createdAt: "2026-10-19T02:00:00Z",
+  },
 ];
 const auditEvents = Array.from({ length: 51 }, (_, index) => ({
   id: 100 - index,
@@ -93,6 +102,8 @@ const calls = {
 let failDisableOnce = true;
 let failUserCreateOnce = true;
 let failClientDisableOnce = true;
+let failClientCreateOnce = true;
+let incompleteNextClientList = false;
 let currentUserIsAdmin = true;
 let server;
 let browser;
@@ -144,7 +155,10 @@ server = http.createServer((req, res) => {
 (async () => {
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({
+      headless: true,
+      executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH || undefined,
+    });
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
     });
@@ -243,13 +257,31 @@ server = http.createServer((req, res) => {
       if (
         endpoint.endsWith("/admin/oauth/clients") &&
         request.method() === "GET"
-      )
+      ) {
+        if (incompleteNextClientList) {
+          incompleteNextClientList = false;
+          return response(route, 200, { items: clients.slice() });
+        }
         return response(route, 200, clients.slice());
+      }
       if (
         endpoint.endsWith("/admin/oauth/clients") &&
         request.method() === "POST"
       ) {
         calls.createdClient += 1;
+        if (failClientCreateOnce) {
+          failClientCreateOnce = false;
+          clients.unshift({
+            id: "c-uncertain",
+            clientId: "ontology_uncertain_123",
+            displayName: body.displayName,
+            redirectUri: body.redirectUri,
+            scopes: body.scopes,
+            enabled: true,
+            createdAt: "2026-10-21T02:30:00Z",
+          });
+          return route.abort("timedout");
+        }
         const created = {
           clientId: "ontology_created_123",
           clientSecret: "example-client-secret-once",
@@ -258,7 +290,7 @@ server = http.createServer((req, res) => {
           scopes: body.scopes,
         };
         clients.unshift({
-          id: "c-created",
+          id: "c-created-success",
           ...created,
           enabled: true,
           createdAt: "2026-10-21T02:30:00Z",
@@ -527,7 +559,64 @@ server = http.createServer((req, res) => {
     await createClientDialog
       .getByLabel("HTTPS 回调地址")
       .fill("https://app.example.com/oidc/callback");
+    incompleteNextClientList = true;
     await createClientDialog
+      .getByRole("button", { name: "创建客户端" })
+      .click();
+    await createClientDialog
+      .getByRole("alert")
+      .filter({ hasText: "本次未发送创建请求" })
+      .waitFor();
+    assert.equal(
+      calls.createdClient,
+      0,
+      "incomplete pre-submit snapshot must prevent the POST"
+    );
+    await createClientDialog
+      .getByRole("button", { name: "创建客户端" })
+      .click();
+    await createClientDialog
+      .getByRole("alert")
+      .getByRole("button", { name: "刷新列表核对" })
+      .click();
+    const uncertainClientNotice = page
+      .getByRole("alert")
+      .filter({ hasText: "发现一条提交后新增的匹配客户端" });
+    await uncertainClientNotice.waitFor();
+    assert.equal(
+      (await uncertainClientNotice.innerText()).includes("请停用该记录"),
+      false,
+      "uncertain outcome must not advise disabling a pre-existing matching client"
+    );
+    await uncertainClientNotice
+      .getByRole("button", { name: "查看疑似客户端" })
+      .click();
+    const uncertainClientDetails = page
+      .getByRole("dialog")
+      .filter({ hasText: "OAuth 客户端详情" });
+    assert.equal(
+      await uncertainClientDetails.getByLabel("完整 Client ID").inputValue(),
+      "ontology_uncertain_123",
+      "the checked candidate must be the post-snapshot record"
+    );
+    assert.equal(
+      calls.createdClient,
+      1,
+      "checking an uncertain create must not replay the POST"
+    );
+    await page.keyboard.press("Escape");
+    await uncertainClientDetails.waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "注册客户端" }).click();
+    const successfulCreateDialog = page
+      .getByRole("dialog")
+      .filter({ hasText: "注册 OAuth 客户端" });
+    await successfulCreateDialog
+      .getByLabel("应用名称")
+      .fill("全新 Workbench 客户端");
+    await successfulCreateDialog
+      .getByLabel("HTTPS 回调地址")
+      .fill("https://app.example.com/other-callback");
+    await successfulCreateDialog
       .getByRole("button", { name: "创建客户端" })
       .click();
     const secretDialog = page
@@ -553,7 +642,7 @@ server = http.createServer((req, res) => {
       .waitFor();
     await secretDialog.getByRole("button", { name: "已保存，关闭" }).click();
     await secretDialog.waitFor({ state: "detached" });
-    assert.equal(calls.createdClient, 1);
+    assert.equal(calls.createdClient, 2);
     console.log(
       "PASS: disabled client keeps details, full values are accessible, and uncertain writes require a state check before manual retry"
     );
@@ -616,6 +705,9 @@ server = http.createServer((req, res) => {
     await navigationDrawer.getByRole("link", { name: "安全审计" }).waitFor();
     await page.keyboard.press("Escape");
     await navigationDrawer.waitFor({ state: "hidden" });
+    await page.waitForFunction(
+      () => document.activeElement?.getAttribute("aria-label") === "打开主导航"
+    );
     assert.equal(
       await page.evaluate(() =>
         document.activeElement?.getAttribute("aria-label")
