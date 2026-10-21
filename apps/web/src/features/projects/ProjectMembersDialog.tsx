@@ -1,4 +1,5 @@
 import { useCurrentUser } from '@/features/auth/context';
+import ListPagination from '@/features/lists/ListPagination';
 import {
   getProjectMembers,
   inviteProjectUser,
@@ -15,7 +16,7 @@ import {
 import { DeleteOutlined, CrownOutlined } from '@ant-design/icons';
 import { Alert, App, Button, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'umi';
 
 type Props = { projectId: string; access: ProjectAccess; open: boolean; onClose: () => void };
@@ -38,6 +39,7 @@ const ProjectMembersDialog: React.FC<Props> = ({ projectId, access, open, onClos
   const [selectedUser, setSelectedUser] = useState<string>();
   const [inviteRole, setInviteRole] = useState<ProjectRole>('EDITOR');
   const [submitting, setSubmitting] = useState(false);
+  const requestSequence = useRef(0);
 
   const capabilities = access.capabilities || [];
   const isOwner = access.role === 'OWNER';
@@ -49,20 +51,26 @@ const ProjectMembersDialog: React.FC<Props> = ({ projectId, access, open, onClos
     : ['EDITOR', 'VIEWER'] as ProjectRole[]), [isOwner, isSystemAdmin]);
 
   const refresh = async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     try {
       setLoadError('');
       const response = await getProjectMembers(projectId, memberPage, memberPageSize);
+      if (sequence !== requestSequence.current) return;
       setMembers(response.data || []);
       setMemberTotal(response.addition?.total || 0);
     } catch (error) {
+      if (sequence !== requestSequence.current) return;
       setLoadError((error as Error)?.message || '成员列表加载失败');
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   };
 
-  useEffect(() => { if (open) void refresh(); }, [open, projectId, memberPage, memberPageSize]);
+  useEffect(() => {
+    if (open) void refresh();
+    return () => { requestSequence.current += 1; };
+  }, [open, projectId, memberPage, memberPageSize]);
 
   const searchUsers = async () => {
     if (searchText.trim().length < 2) {
@@ -205,9 +213,19 @@ const ProjectMembersDialog: React.FC<Props> = ({ projectId, access, open, onClos
         action={<Button onClick={() => void refresh()}>重试</Button>} /> : null}
       <div style={{ maxHeight: 'min(60vh, 520px)', overflowY: 'auto', minWidth: 0 }}>
         <Table<ProjectMember> size="small" rowKey="userId" loading={loading} columns={columns}
-          dataSource={loadError ? [] : members} scroll={{ x: 520 }} pagination={{ current: memberPage, pageSize: memberPageSize,
-            total: memberTotal, showSizeChanger: true, onChange: (nextPage, nextSize) => { setMemberPage(nextPage); setMemberPageSize(nextSize); } }} />
+          dataSource={loadError ? [] : members} scroll={{ x: 520 }} pagination={false}
+          locale={{ emptyText: loadError ? '列表读取失败' : '暂无项目成员' }} />
       </div>
+      <ListPagination
+        current={memberPage}
+        pageSize={memberPageSize}
+        total={memberTotal}
+        loading={loading || Boolean(loadError)}
+        onChange={(nextPage, nextSize) => {
+          setMemberPage(nextPage);
+          setMemberPageSize(nextSize);
+        }}
+      />
 
       {canManage ? <section style={{ marginTop: 24 }} aria-label="邀请成员">
         <Typography.Title level={5}>邀请已注册用户</Typography.Title>

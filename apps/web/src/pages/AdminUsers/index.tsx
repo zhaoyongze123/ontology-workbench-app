@@ -32,8 +32,9 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
+import type { ColumnsType } from 'antd/es/table';
 import React, { useEffect, useRef, useState } from 'react';
+import ListPagination from '@/features/lists/ListPagination';
 import { useNavigate } from 'umi';
 
 type CreateUserFields = { username: string; displayName: string };
@@ -111,7 +112,7 @@ const AdminUsersPage: React.FC = () => {
 
   if (!actor.systemAdmin) {
     return (
-      <AdminPage title="用户管理" description="此页面仅供系统管理员使用。">
+      <AdminPage title="用户管理">
         <Result status="403" title="无权访问" />
       </AdminPage>
     );
@@ -476,18 +477,7 @@ const AdminUsersPage: React.FC = () => {
     },
   ];
 
-  const pagination: TablePaginationConfig = {
-    current: page + 1,
-    pageSize: size,
-    total,
-    disabled: loading,
-    hideOnSinglePage: true,
-    showSizeChanger: total > size,
-    showTotal: (count) => `共 ${count} 条`,
-    onChange: (currentPage, nextSize) => void load(currentPage - 1, nextSize),
-  };
-
-  const showTable = loading || rows.length > 0 || !loadError;
+  const showTable = loading || rows.length > 0 || (hasLoaded && !loadError);
   const targetLabel = disableTarget
     ? `${disableTarget.displayName || disableTarget.username}（${
         disableTarget.username
@@ -497,7 +487,6 @@ const AdminUsersPage: React.FC = () => {
   return (
     <AdminPage
       title="用户管理"
-      description="查看并维护账号启用状态、本地密码状态和系统角色。项目内角色由各项目成员设置决定。"
       actions={
         <Button
           type="primary"
@@ -559,11 +548,20 @@ const AdminUsersPage: React.FC = () => {
           columns={columns}
           dataSource={rows}
           loading={loading}
-          locale={{ emptyText: '暂无用户' }}
+          locale={{ emptyText: loadError ? '列表读取失败' : '暂无用户' }}
           scroll={{ x: 1120 }}
-          pagination={pagination}
+          pagination={false}
         />
       ) : null}
+      <ListPagination
+        current={page + 1}
+        pageSize={size}
+        total={total}
+        loading={loading}
+        onChange={(nextPage, nextSize) =>
+          void load(nextPage - 1, nextSize)
+        }
+      />
 
       <Modal
         title="创建用户"

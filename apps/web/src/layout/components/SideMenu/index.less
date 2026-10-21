@@ -1,52 +1,39 @@
-/** 添加一个包装容器样式 */
-.sideMenuContainer {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-
-  .projectSelector {
-    width: 100%;
-    max-width: 100%;
-    padding: 18px 10px;
-    background: #fff;
-    border-right: 1px solid #e8e8e8;
-    border-bottom: 1px solid #e8e8e8;
-    justify-content: center;
-    height: 64px;
-  }
-
-  .menu {
-    flex: 1;
-    overflow-y: auto;
-    background: #fff;
-    padding-top: 4px;
-  }
-
-  .sidebarTrigger {
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    transition: all 0.3s;
-    border-right: 1px solid #e8e8e8;
-  }
+.projectSection {
+  margin: 12px 0;
 }
 
-/** 当侧边栏折叠时，触发器居中显示 */
-:global(.ant-layout-sider-collapsed) {
-  .sidebarTrigger {
-    justify-content: center;
-    padding-right: 0;
-  }
+.sectionTitle {
+  display: block;
+  padding: 10px 16px 4px;
+  font-size: 12px;
+  line-height: 20px;
+}
 
-  .projectSelector {
-    padding: 16px 5px;
+.projectSelector {
+  display: flex;
+  justify-content: center;
+  padding: 8px 12px 4px;
+}
 
-    /** 确保按钮居中 */
-    button {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-  }
+.collapsedActions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.loading {
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+}
+
+.backToProjects {
+  margin: 0 8px 4px;
+  padding-inline: 8px;
+}
+
+.menu {
+  background: transparent;
 }

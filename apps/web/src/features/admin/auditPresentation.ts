@@ -58,6 +58,12 @@ const EVENTS: Record<string, EventPresentation> = {
   },
 };
 
+/** 筛选控件提交稳定事件编码，界面只展示已登记的中文名称。 */
+export const AUDIT_EVENT_OPTIONS = Object.entries(EVENTS).map(([value, event]) => ({
+  value,
+  label: event.label,
+}));
+
 const SHORT_ID_LENGTH = 8;
 
 function shortenedId(value: unknown): string | undefined {

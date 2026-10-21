@@ -1,185 +1,156 @@
-import routes from '@/config/routes';
+import { ArrowLeftOutlined, ProjectOutlined } from '@ant-design/icons';
+import { Button, Menu, Popover, Select, Tooltip, Typography } from 'antd';
+import React, { useMemo, useState } from 'react';
+import { useLocation, useNavigate, useParams, useRequest } from 'umi';
 import { organizationPage } from '@/services_v1/organizationService';
 import {
-  EllipsisOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-} from '@ant-design/icons';
-import { Button, Menu, message, Popover, Row, Select, Spin } from 'antd';
-import React, { useMemo } from 'react';
-import { useLocation, useNavigate, useParams, useRequest } from 'umi';
+  concreteProjectRoute,
+  matchNavigationRoute,
+  PROJECT_NAV_ROUTES,
+} from '@/config/routes';
 import styles from './index.less';
 
-/** 侧边栏菜单组件
- * @param collapsed 是否折叠
- * @param toggleCollapsed 切换折叠状态回调
- */
+/** 同一全局侧栏中的项目区；这里只承载当前项目切换与图谱入口。 */
 const SideMenu: React.FC<{
   collapsed: boolean;
-  toggleCollapsed: () => void;
-}> = ({ collapsed, toggleCollapsed }) => {
+  onNavigate?: () => void;
+}> = ({ collapsed, onNavigate }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams<{ id: string }>();
-  const organizationId = params.id || '';
+  const organizationId = params.id || location.pathname.split('/')[2] || '';
+  const [projectKeyword, setProjectKeyword] = useState('');
+  const [rememberedProject, setRememberedProject] = useState<{
+    value: string;
+    label: string;
+  }>();
 
-  /** 使用useRequest获取项目列表 */
-  const { data: projectListData, loading: projectListLoading } = useRequest(
-    () =>
-      organizationPage({
-        pageNum: 1,
-        pageSize: 100,
-      }),
+  const { data: projects, loading } = useRequest(
+    () => organizationPage({
+      pageNum: 1,
+      pageSize: 100,
+      keyword: projectKeyword.trim() || undefined,
+    }),
     {
       formatResult: (response) => response.data ?? [],
+      refreshDeps: [projectKeyword],
+      debounceInterval: 250,
     },
   );
 
-  /** 项目列表数据 */
-  const projectList = projectListData ?? [];
-
-  /** 获取主路由配置（提取公共逻辑，避免重复查找） */
-  const mainRoute = useMemo(
-    () => routes.find((route) => route.path === '/manage/:id'),
-    [],
+  const projectOptions = useMemo(
+    () => {
+      const options = (projects ?? []).map((project) => ({
+        value: String(project.id ?? ''),
+        label: project.name ?? '未命名项目',
+      }));
+      if (rememberedProject?.value === organizationId
+          && !options.some((option) => option.value === rememberedProject.value)) {
+        options.unshift(rememberedProject);
+      }
+      return options;
+    },
+    [organizationId, projects, rememberedProject],
   );
 
-  /** 从routes.ts获取菜单项配置 */
-  const menuItems = useMemo(() => {
-    if (!mainRoute?.routes) return [];
-    return mainRoute.routes
-      .filter((route) => route.name && route.path && !route.redirect)
-      .map((route) => {
-        const IconComponent = route.icon;
-        const path = organizationId
-          ? route.path?.replace(':id', organizationId)
-          : route.path;
-        return {
-          key: path || '',
-          icon: IconComponent ? <IconComponent /> : null,
-          label: route.name,
-        };
-      });
-  }, [mainRoute, organizationId]);
+  const activeRoute = matchNavigationRoute(location.pathname);
+  const selectedKey = activeRoute?.path.startsWith('/manage/')
+    ? concreteProjectRoute(activeRoute, organizationId)
+    : '';
+  const menuItems = PROJECT_NAV_ROUTES.map((route) => {
+    const Icon = route.icon;
+    return {
+      key: concreteProjectRoute(route, organizationId),
+      icon: <Icon />,
+      label: route.name,
+    };
+  });
 
-  /** 处理菜单点击 */
-  const handleMenuClick = (info: { key: string }) => {
-    if (!organizationId) {
-      message.warning('请先选择一个项目');
-      return;
-    }
-    navigate(info.key);
+  const selectProject = (nextProjectId: string) => {
+    if (!nextProjectId) return;
+    // 远程搜索会替换候选项，单独记住当前项目名称以避免选择器显示空值。
+    const selectedProject = projectOptions.find((option) => option.value === nextProjectId);
+    if (selectedProject) setRememberedProject(selectedProject);
+    const route = activeRoute?.path.startsWith('/manage/')
+      ? activeRoute
+      : PROJECT_NAV_ROUTES[0];
+    navigate(concreteProjectRoute(route, nextProjectId));
+    onNavigate?.();
   };
 
-  /** 处理项目选择变更 */
-  const handleProjectChange = (value: string) => {
-    if (!value) return;
-    /** 智能导航：保持当前页面类型，只替换项目ID */
-    const pathParts = location.pathname.split('/');
-    /** 如果在 /manage/:id 路径下，尝试保持当前子路由 */
-    if (pathParts[1] === 'manage' && pathParts.length >= 3) {
-      const currentSubPath = pathParts[3]; // 例如 'ontology' 或 'entity'
-      if (currentSubPath && mainRoute?.routes) {
-        /** 查找匹配的子路由 */
-        const matchedRoute = mainRoute.routes.find((route) => {
-          const routeParts = (route.path as string)?.split('/');
-          return routeParts?.[2] === currentSubPath;
-        });
-        if (matchedRoute?.path) {
-          navigate(matchedRoute.path.replace(':id', value));
-          return;
-        }
-      }
-    }
-    /** 默认导航到项目首页 */
-    navigate(`/manage/${value}`);
-  };
-
-  /** 根据当前路径确定应该选中的菜单项 */
-  const selectedKeys = useMemo(() => {
-    const { pathname } = location;
-    if (!mainRoute?.routes) return [];
-    const allRoutes = mainRoute.routes;
-    /** 尝试精确匹配 */
-    const exactMatch = allRoutes.find((route) => {
-      if (!route.path) return false;
-      /** 替换路径中的:id为实际的organizationId */
-      const routePath = organizationId
-        ? route.path.replace(':id', organizationId)
-        : route.path;
-      return pathname === routePath;
-    });
-    if (exactMatch) {
-      const matchPath = organizationId
-        ? exactMatch.path?.replace(':id', organizationId)
-        : exactMatch.path;
-      return [matchPath || ''];
-    }
-
-    /** 查找可能的父级路径  获取所有可见的菜单项路径 */
-    const visibleMenuPaths = allRoutes
-      .filter((route) => route.path && route.path !== '/manage/:id')
-      .map((route) =>
-        organizationId
-          ? (route.path as string).replace(':id', organizationId)
-          : (route.path as string),
-      );
-    /** 按路径长度降序排序，确保先匹配最具体的父路径 */
-    visibleMenuPaths.sort((a, b) => b.length - a.length);
-    /** 查找最匹配的父路径 */
-    for (const menuPath of visibleMenuPaths) {
-      /** 确保是路径前缀匹配，而不是部分字符串匹配 */
-      if (pathname.startsWith(`${menuPath}/`)) {
-        return [menuPath];
-      }
-    }
-    return [];
-  }, [location.pathname, organizationId, mainRoute]);
-
-  /** 项目选择器内容 */
-  const ProjectSelectorContent = projectListLoading ? (
-    <Row style={{ textAlign: 'center', padding: '5px 0' }}>
-      <Spin size="small" />
-    </Row>
-  ) : (
+  const projectSelect = (
     <Select
+      aria-label="切换项目"
       value={organizationId || undefined}
-      onChange={handleProjectChange}
-      style={{ width: collapsed ? 120 : '100%' }}
-      options={projectList.map((project) => ({
-        value: project.id ?? '',
-        label: project.name ?? '未命名项目',
-      }))}
+      onChange={selectProject}
+      showSearch
+      filterOption={false}
+      onSearch={setProjectKeyword}
+      options={projectOptions}
+      loading={loading}
       placeholder="选择项目"
       notFoundContent="暂无项目"
+      style={{ width: '100%' }}
     />
   );
 
   return (
-    <Row className={styles.sideMenuContainer}>
-      <Row className={styles.projectSelector}>
+    <section className={styles.projectSection} aria-label="当前项目工作区">
+      {!collapsed ? (
+        <Typography.Text className={styles.sectionTitle} type="secondary">
+          项目工作区
+        </Typography.Text>
+      ) : null}
+      <div className={styles.projectSelector}>
         {collapsed ? (
-          <Popover placement="right" content={ProjectSelectorContent}>
-            <Button icon={<EllipsisOutlined />} />
-          </Popover>
+          <div className={styles.collapsedActions}>
+            <Popover placement="right" content={projectSelect} trigger="click">
+              <Button aria-label="切换项目" icon={<ProjectOutlined />} />
+            </Popover>
+            <Tooltip title="返回项目列表" placement="right">
+              <Button
+                type="text"
+                aria-label="返回项目列表"
+                icon={<ArrowLeftOutlined aria-hidden="true" />}
+                onClick={() => {
+                  navigate('/home');
+                  onNavigate?.();
+                }}
+              />
+            </Tooltip>
+          </div>
         ) : (
-          ProjectSelectorContent
+          projectSelect
         )}
-      </Row>
+      </div>
+      {!collapsed ? (
+        <Button
+          className={styles.backToProjects}
+          type="link"
+          size="small"
+          icon={<ArrowLeftOutlined aria-hidden="true" />}
+          onClick={() => {
+            navigate('/home');
+            onNavigate?.();
+          }}
+        >
+          返回项目列表
+        </Button>
+      ) : null}
       <Menu
         className={styles.menu}
         mode="inline"
-        selectedKeys={selectedKeys}
+        inlineCollapsed={collapsed}
+        selectedKeys={selectedKey ? [selectedKey] : []}
         items={menuItems}
-        onClick={handleMenuClick}
+        onClick={({ key }) => {
+          if (!organizationId) return;
+          navigate(key);
+          onNavigate?.();
+        }}
         disabled={!organizationId}
       />
-      <Row className={styles.sidebarTrigger}>
-        <Button type="text" onClick={toggleCollapsed}>
-          {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-        </Button>
-      </Row>
-    </Row>
+    </section>
   );
 };
 

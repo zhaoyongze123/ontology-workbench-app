@@ -44,6 +44,7 @@ public class EntityRelationshipDao extends ServiceImpl<EntityRelationshipMapper,
                 .eq(EntityRelationship::getGraphId, queryVO.getGraphId())
                 .in(!CollectionUtils.isEmpty(queryVO.getRelationshipIdList()), EntityRelationship::getId, queryVO.getRelationshipIdList())
                 .orderByDesc(EntityRelationship::getUpdateTime)
+                .orderByDesc(EntityRelationship::getId)
                 .page(page);
     }
 
@@ -75,6 +76,7 @@ public class EntityRelationshipDao extends ServiceImpl<EntityRelationshipMapper,
         return lambdaQuery()
                 .eq(EntityRelationship::getGraphId, graphId)
                 .orderByDesc(EntityRelationship::getUpdateTime)
+                .orderByDesc(EntityRelationship::getId)
                 .list();
     }
 }

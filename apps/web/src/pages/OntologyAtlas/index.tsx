@@ -8,18 +8,19 @@ import {
 import { ApiResultListGraphVO, GraphVO } from '@/services_v1/typings';
 import { GraphType } from '@/utils/typeEnum';
 import { downloadJson } from '@/utils/util';
-import { ImportOutlined, LeftOutlined, PlusOutlined } from '@ant-design/icons';
+import { ImportOutlined, PlusOutlined } from '@ant-design/icons';
 import { history, Link, useParams, useRequest } from '@umijs/max';
-import { App, Button, Col, Row, Spin, Table } from 'antd';
+import { Alert, App, Button, Row, Space, Spin, Table } from 'antd';
 import { useState } from 'react';
-import styles from './index.less';
+import PageShell from '@/features/layout/PageShell';
+import ListPagination from '@/features/lists/ListPagination';
 import OntoGraphAdd from './OntoGraphAdd';
 
 /** 本体图谱管理 */
 function OntologyManage() {
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isImportModalVisible, setIsImportModalVisible] = useState(false);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [current, setPageCurrent] = useState(1);
   const params = useParams<{ id: string }>();
   const organizationId = params.id || '';
@@ -34,6 +35,7 @@ function OntologyManage() {
     refresh: refreshOntologyList,
     run: tableRun,
     loading: tableLoading,
+    error: tableError,
   } = useRequest<ApiResultListGraphVO>(pageGraph, {
     formatResult: (res) => {
       return { ...res };
@@ -54,13 +56,13 @@ function OntologyManage() {
     : 0;
 
   /** 表格变化处理函数 */
-  const handlePageChange = (pagination: any) => {
-    const { current: newCurrent, pageSize: newPageSize } = pagination;
-    setPageCurrent(newCurrent);
+  const handlePageChange = (newCurrent: number, newPageSize: number) => {
+    const nextPage = newPageSize === pageSize ? newCurrent : 1;
+    setPageCurrent(nextPage);
     setPageSize(newPageSize);
     tableRun({
       graphType: 'ONTOLOGY',
-      pageNum: newCurrent,
+      pageNum: nextPage,
       pageSize: newPageSize,
       organizationId: organizationId,
     });
@@ -256,37 +258,35 @@ function OntologyManage() {
   ];
 
   return (
-    <Row className={styles.ontologyManage}>
-      <Col span={24}>
-        <Row className={styles.actionButtons}>
-          <Button
-            type="default"
-            icon={<LeftOutlined />}
-            onClick={() => {
-              /** 返回项目管理页面 */
-              history.push('/home');
-            }}
+    <PageShell
+      title="本体图谱"
+      actions={
+        <Space wrap>
+          {canEdit ? <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setIsCreateModalVisible(true)}
           >
-            返回
-          </Button>
-          <Row className={styles.rightButtons}>
-            {canEdit ? <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                setIsCreateModalVisible(true);
-              }}
-            >
-              新建本体图谱
-            </Button> : null}
-            {canEdit ? <Button
-              icon={<ImportOutlined />}
-              onClick={() => setIsImportModalVisible(true)}
-            >
-              导入本体图谱
-            </Button> : null}
-          </Row>
-        </Row>
+            新建本体图谱
+          </Button> : null}
+          {canEdit ? <Button
+            icon={<ImportOutlined />}
+            onClick={() => setIsImportModalVisible(true)}
+          >
+            导入本体图谱
+          </Button> : null}
+        </Space>
+      }
+    >
+        {tableError ? (
+          <Alert
+            style={{ marginBottom: 12 }}
+            type="error"
+            showIcon
+            message="本体图谱列表读取失败"
+            action={<Button onClick={() => void refreshOntologyList()}>重试</Button>}
+          />
+        ) : null}
         <Spin spinning={tableLoading} tip="数据加载中...">
           <Table
             size="small"
@@ -295,17 +295,18 @@ function OntologyManage() {
               ...item,
             }))}
             rowKey={(record: GraphVO) => record.id as string}
-            pagination={{
-              current: current,
-              pageSize: pageSize,
-              showSizeChanger: true,
-              total: total,
-              showTotal: (total) => `共 ${total} 条`,
-            }}
+            pagination={false}
+            locale={{ emptyText: tableError ? '列表读取失败' : '暂无本体图谱' }}
             scroll={{ y: 'calc(100vh - 292px)' }}
-            onChange={handlePageChange}
           />
         </Spin>
+        <ListPagination
+          current={current}
+          pageSize={pageSize}
+          total={total}
+          loading={tableLoading || Boolean(tableError)}
+          onChange={handlePageChange}
+        />
 
         {/* 新建本体图谱弹窗组件 */}
         <OntoGraphAdd
@@ -324,8 +325,7 @@ function OntologyManage() {
           organizationId={organizationId}
           graphType={GraphType.ONTOLOGY}
         />
-      </Col>
-    </Row>
+    </PageShell>
   );
 }
 

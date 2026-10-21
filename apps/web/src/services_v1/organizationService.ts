@@ -78,6 +78,8 @@ export async function organizationPage (
     pageNum?: number;
     /** 每页数量 */
     pageSize?: number;
+    /** 项目名称筛选词，侧栏切换项目时用于远程搜索完整项目列表 */
+    keyword?: string;
   },
   options?: Record<string, any>,
 ) {

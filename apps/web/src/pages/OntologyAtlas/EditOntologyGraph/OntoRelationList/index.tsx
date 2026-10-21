@@ -10,7 +10,8 @@ import {
   RelationshipVO,
 } from '@/services_v1/typings';
 import { useRequest } from '@umijs/max';
-import { App, Button, Layout, Row, Space, Table, Tooltip } from 'antd';
+import ListPagination from '@/features/lists/ListPagination';
+import { Alert, App, Button, Layout, Row, Space, Table, Tooltip } from 'antd';
 import React, { forwardRef, useImperativeHandle, useState } from 'react';
 import OntoRelationModal from '../OntoRelationModal';
 import styles from './index.less';
@@ -24,7 +25,7 @@ const OntoRelationList = forwardRef<
     canMutate?: boolean;
   }
 >(({ atlasId, readonly = false, canMutate = true }, ref) => {
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [currentRelationList, setCurrentRelationList] = useState(1);
   const [relationExportDropdownOpen, setRelationExportDropdownOpen] =
     useState(false);
@@ -44,6 +45,7 @@ const OntoRelationList = forwardRef<
     refresh: refreshRelationData,
     run: OntoRelationTableRun,
     loading: OntoRelationTableLoading,
+    error: OntoRelationTableError,
   } = useRequest<ApiResultListRelationshipVO>(pageRelationship, {
     formatResult: (res) => {
       return { ...res };
@@ -85,15 +87,15 @@ const OntoRelationList = forwardRef<
     : 0;
 
   /** 本体关系表格分页 */
-  const handleRelationTableChange = (pagination: any) => {
-    const { current, pageSize } = pagination;
-    setCurrentRelationList(current);
-    setPageSize(pageSize);
+  const handleRelationPageChange = (nextCurrent: number, nextPageSize: number) => {
+    const currentPage = nextPageSize === pageSize ? nextCurrent : 1;
+    setCurrentRelationList(currentPage);
+    setPageSize(nextPageSize);
     OntoRelationTableRun({
       graphId: atlasId,
       graphType: 'ONTOLOGY',
-      pageNum: current,
-      pageSize: pageSize,
+      pageNum: currentPage,
+      pageSize: nextPageSize,
     });
   };
 
@@ -332,6 +334,14 @@ const OntoRelationList = forwardRef<
             message.info('本体关系导入功能待实现');
           }}
         />
+        {OntoRelationTableError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="本体关系列表读取失败"
+            action={<Button onClick={() => void refreshRelationData()}>重试</Button>}
+          />
+        ) : null}
         <Table
           size="small"
           columns={OntoRelationColumns}
@@ -339,13 +349,7 @@ const OntoRelationList = forwardRef<
           dataSource={OntoRelationData?.data?.map((item: RelationshipVO) => ({
             ...item,
           }))}
-          pagination={{
-            current: currentRelationList,
-            pageSize: pageSize,
-            showSizeChanger: true,
-            total: ontoRelationTotal,
-            showTotal: (total) => `共 ${total} 条`,
-          }}
+          pagination={false}
           scroll={{ y: 'calc(100vh - 292px)' }}
           rowKey={(record: RelationshipVO) => record.id as string}
           rowSelection={!canMutate ? undefined : {
@@ -353,7 +357,7 @@ const OntoRelationList = forwardRef<
             columnWidth: 30,
             ...rowSelection,
           }}
-          onChange={handleRelationTableChange}
+          locale={{ emptyText: OntoRelationTableError ? '列表读取失败' : '暂无本体关系' }}
         />
         {canMutate && OntoRelationData?.data?.length > 0 && (
           <Row className={styles.batchActions}>
@@ -364,6 +368,13 @@ const OntoRelationList = forwardRef<
             />
           </Row>
         )}
+        <ListPagination
+          current={currentRelationList}
+          pageSize={pageSize}
+          total={ontoRelationTotal}
+          loading={OntoRelationTableLoading || Boolean(OntoRelationTableError)}
+          onChange={handleRelationPageChange}
+        />
       </Layout>
 
       {/* 本体关系编辑与新建弹窗 */}

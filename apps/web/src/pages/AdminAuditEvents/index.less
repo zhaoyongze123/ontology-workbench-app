@@ -1,0 +1,41 @@
+.filterField {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 190px;
+  font-size: 12px;
+}
+
+.filterControls {
+  width: 100%;
+}
+
+.filterControls > :global(.ant-space-item) {
+  min-width: 0;
+}
+
+.eventField,
+.actorField {
+  flex: 1 1 220px;
+}
+
+.viewLatest {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+@media (max-width: 640px) {
+  .filterField,
+  .eventField,
+  .actorField {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .filterControls > :global(.ant-space-item) {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+}

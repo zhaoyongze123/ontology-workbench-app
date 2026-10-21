@@ -1,7 +1,8 @@
 import { PropertySchema } from '@/services_v1/typings';
 import { getPlaceholderByType, validatePropertyValue } from '@/utils/validator';
-import { Checkbox, Input, Row, Select, Table, Tooltip } from 'antd';
-import React from 'react';
+import ListPagination from '@/features/lists/ListPagination';
+import { Checkbox, Input, Select, Table, Tooltip } from 'antd';
+import React, { useEffect, useState } from 'react';
 
 /**
  * 属性表格
@@ -30,6 +31,15 @@ const PropertyTable: React.FC<{
   showDescription = false,
   onPropertyChange,
 }) => {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const pageRows = properties.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(properties.length / pageSize));
+    if (page > lastPage) setPage(lastPage);
+  }, [page, pageSize, properties.length]);
+
   /** 获取属性的当前值 对于 OBJECT 类型，如果值是对象则序列化为 JSON 字符串 */
   const getPropertyValue = (record: PropertySchema): any => {
     let value: any;
@@ -268,17 +278,28 @@ const PropertyTable: React.FC<{
   ];
 
   return (
-    <Row style={{ display: 'flex', justifyContent: 'center', width: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, width: '100%' }}>
       <Table
-        rowKey={(record) => record.name || Math.random().toString()}
-        dataSource={properties}
+        rowKey={(record) => record.name || `property-${properties.indexOf(record)}`}
+        dataSource={pageRows}
         pagination={false}
         size="small"
         bordered
         loading={loading}
         columns={columns}
+        scroll={{ x: 'max-content' }}
       />
-    </Row>
+      <ListPagination
+        current={page}
+        pageSize={pageSize}
+        total={properties.length}
+        loading={loading}
+        onChange={(nextPage, nextSize) => {
+          setPage(nextPage);
+          setPageSize(nextSize);
+        }}
+      />
+    </div>
   );
 };
 

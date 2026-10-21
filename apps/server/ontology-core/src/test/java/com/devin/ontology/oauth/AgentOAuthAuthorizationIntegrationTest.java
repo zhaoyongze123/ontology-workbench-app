@@ -432,6 +432,55 @@ class AgentOAuthAuthorizationIntegrationTest {
     }
 
     @Test
+    void auditFiltersApplyBeforeCursorPaginationAndPreserveArrayResponse() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        String runId = UUID.randomUUID().toString();
+        java.time.OffsetDateTime now = java.time.OffsetDateTime.now(java.time.ZoneOffset.ofHours(8));
+        java.time.LocalDateTime olderTime = now.minusHours(3).toLocalDateTime();
+        java.time.LocalDateTime newerTime = now.minusHours(2).toLocalDateTime();
+        java.time.OffsetDateTime start = now.minusDays(1);
+        java.time.OffsetDateTime end = now.minusHours(1);
+        // 审计表是 append-only；用唯一用户与 runId 隔离测试记录，由一次性集成库在测试后整体销毁。
+        jdbc.update("INSERT INTO ontology.og_audit_event (event_type, actor_user_id, details_json, create_time) "
+                        + "VALUES ('AUDIT_FILTER_MATCH', ?, CAST(? AS jsonb), ?)",
+                userId, "{\"testRunId\":\"" + runId + "\",\"sequence\":\"older\"}",
+                java.sql.Timestamp.valueOf(olderTime));
+        jdbc.update("INSERT INTO ontology.og_audit_event (event_type, actor_user_id, details_json, create_time) "
+                        + "VALUES ('AUDIT_FILTER_MATCH', ?, CAST(? AS jsonb), ?)",
+                userId, "{\"testRunId\":\"" + runId + "\",\"sequence\":\"newer\"}",
+                java.sql.Timestamp.valueOf(newerTime));
+        // 最新记录故意不匹配筛选；limit=1 仍应先找到较早的匹配记录。
+        for (int i = 0; i < 5; i++) {
+            jdbc.update("INSERT INTO ontology.og_audit_event (event_type, actor_user_id, details_json) "
+                            + "VALUES ('AUDIT_FILTER_NOISE', ?, CAST(? AS jsonb))",
+                    userId, "{\"testRunId\":\"" + runId + "\"}");
+        }
+
+        String filters = "limit=1&eventTypes=AUDIT_FILTER_MATCH&actorUserId=" + userId
+                + "&startTime=" + URLEncoder.encode(start.toString(), StandardCharsets.UTF_8)
+                + "&endTime=" + URLEncoder.encode(end.toString(), StandardCharsets.UTF_8);
+        HttpResponse<String> first = get("/admin/audit-events?" + filters);
+        assertThat(first.statusCode()).isEqualTo(200);
+        JsonNode firstRows = mapper.readTree(first.body());
+        assertThat(firstRows.isArray()).isTrue();
+        assertThat(firstRows).hasSize(1);
+        assertThat(firstRows.get(0).path("details").path("sequence").asText()).isEqualTo("newer");
+
+        long cursor = firstRows.get(0).path("id").asLong();
+        HttpResponse<String> second = get("/admin/audit-events?" + filters + "&beforeId=" + cursor);
+        assertThat(second.statusCode()).isEqualTo(200);
+        assertThat(mapper.readTree(second.body()).get(0).path("details").path("sequence").asText())
+                .isEqualTo("older");
+
+        HttpResponse<String> invalidActor = get("/admin/audit-events?limit=20&actorUserId=not-a-uuid");
+        assertThat(invalidActor.statusCode()).isEqualTo(400);
+    }
+
+    @Test
     void anonymousAuthorizeRedirectsToLoginAndRfc7009RevokesTokensWithAndWithoutHint() throws Exception {
         String csrf = csrfToken();
         HttpResponse<String> loggedIn = postForm("/auth/login", csrf,

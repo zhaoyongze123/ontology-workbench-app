@@ -109,7 +109,7 @@ public class OrganizationDao extends ServiceImpl<OrganizationMapper, Organizatio
         pageArgs[queryArgs.length + 1] = offset;
         List<Organization> rows = jdbcTemplate.query(
                 "SELECT p.id, p.name, p.description, p.create_time, p.update_time" + fromWhere
-                        + " ORDER BY p.update_time DESC LIMIT ? OFFSET ?",
+                        + " ORDER BY p.update_time DESC, p.id DESC LIMIT ? OFFSET ?",
                 (rs, rowNum) -> {
                     Organization organization = new Organization();
                     organization.setId(rs.getBigDecimal("id").toBigInteger());

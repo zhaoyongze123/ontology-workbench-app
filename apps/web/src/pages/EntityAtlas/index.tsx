@@ -8,18 +8,19 @@ import {
 import { ApiResultListGraphVO, GraphVO } from '@/services_v1/typings';
 import { GraphType } from '@/utils/typeEnum';
 import { downloadJson } from '@/utils/util';
-import { ExportOutlined, LeftOutlined, PlusOutlined } from '@ant-design/icons';
+import { ExportOutlined, PlusOutlined } from '@ant-design/icons';
 import { history, Link, useParams, useRequest } from '@umijs/max';
-import { App, Button, Col, Row, Spin, Table } from 'antd';
+import { Alert, App, Button, Row, Space, Spin, Table } from 'antd';
 import { useState } from 'react';
 import EntityGraphAdd from './EntityGraphAdd';
-import styles from './index.less';
+import PageShell from '@/features/layout/PageShell';
+import ListPagination from '@/features/lists/ListPagination';
 
 /** 实体图谱管理 */
 function GraphExample() {
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isImportModalVisible, setIsImportModalVisible] = useState(false);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [current, setCurrent] = useState(1);
   const { message, modal } = App.useApp();
   const params = useParams<{ id: string }>();
@@ -33,6 +34,7 @@ function GraphExample() {
     run: tableRun,
     loading: tableLoading,
     refresh: refreshEntityList,
+    error: tableError,
   } = useRequest<ApiResultListGraphVO>(pageGraph, {
     formatResult: (res) => {
       return { ...res };
@@ -51,13 +53,13 @@ function GraphExample() {
   const total = entityList?.addition?.total ? entityList?.addition?.total : 0;
 
   /** 表格变化处理函数 */
-  const handleTableChange = (pagination: any) => {
-    const { current: newCurrent, pageSize: newPageSize } = pagination;
-    setCurrent(newCurrent);
+  const handleTableChange = (newCurrent: number, newPageSize: number) => {
+    const nextPage = newPageSize === pageSize ? newCurrent : 1;
+    setCurrent(nextPage);
     setPageSize(newPageSize);
     tableRun({
       graphType: 'ENTITY',
-      pageNum: newCurrent,
+      pageNum: nextPage,
       pageSize: newPageSize,
       organizationId: organizationId,
     });
@@ -241,34 +243,35 @@ function GraphExample() {
   };
 
   return (
-    <Row className={styles.graphExample}>
-      <Col span={24}>
-        <Row className={styles.actionButtons} justify="end">
-          <Button
-            type="default"
-            icon={<LeftOutlined />}
-            onClick={() => {
-              history.push('/home');
-            }}
+    <PageShell
+      title="实体图谱"
+      actions={
+        <Space wrap>
+          {canEdit ? <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setIsCreateModalVisible(true)}
           >
-            返回
-          </Button>
-          <Row className={styles.rightButtons}>
-            {canEdit ? <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => setIsCreateModalVisible(true)}
-            >
-              新建实体图谱
-            </Button> : null}
-            {canEdit ? <Button
-              onClick={() => setIsImportModalVisible(true)}
-              icon={<ExportOutlined />}
-            >
-              导入实体图谱
-            </Button> : null}
-          </Row>
-        </Row>
+            新建实体图谱
+          </Button> : null}
+          {canEdit ? <Button
+            onClick={() => setIsImportModalVisible(true)}
+            icon={<ExportOutlined />}
+          >
+            导入实体图谱
+          </Button> : null}
+        </Space>
+      }
+    >
+        {tableError ? (
+          <Alert
+            style={{ marginBottom: 12 }}
+            type="error"
+            showIcon
+            message="实体图谱列表读取失败"
+            action={<Button onClick={() => void refreshEntityList()}>重试</Button>}
+          />
+        ) : null}
         <Spin spinning={tableLoading} tip="数据加载中...">
           <Table
             size="small"
@@ -277,17 +280,18 @@ function GraphExample() {
               ...item,
             }))}
             rowKey={(record: any) => record.id}
-            pagination={{
-              current: current,
-              pageSize: pageSize,
-              showSizeChanger: true,
-              total: total,
-              showTotal: (total) => `共 ${total} 条`,
-            }}
+            pagination={false}
+            locale={{ emptyText: tableError ? '列表读取失败' : '暂无实体图谱' }}
             scroll={{ y: 'calc(100vh - 292px)' }}
-            onChange={handleTableChange}
           />
         </Spin>
+        <ListPagination
+          current={current}
+          pageSize={pageSize}
+          total={total}
+          loading={tableLoading || Boolean(tableError)}
+          onChange={handleTableChange}
+        />
 
         {/* 新建实体图谱弹窗 */}
         <EntityGraphAdd
@@ -306,8 +310,7 @@ function GraphExample() {
           organizationId={organizationId}
           graphType={GraphType.ENTITY}
         />
-      </Col>
-    </Row>
+    </PageShell>
   );
 }
 

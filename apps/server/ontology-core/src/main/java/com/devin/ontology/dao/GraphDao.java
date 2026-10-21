@@ -79,6 +79,7 @@ public class GraphDao extends ServiceImpl<GraphMapper, Graph> {
                 .eq(Graph::getOrganizationId, queryVO.getOrganizationId())
                 .eq(Graph::getType, queryVO.getGraphType().name())
                 .orderByDesc(Graph::getUpdateTime)
+                .orderByDesc(Graph::getId)
                 .page(page);
     }
 

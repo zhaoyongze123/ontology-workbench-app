@@ -10,7 +10,8 @@ import {
 } from '@/services_v1/typings';
 import { downloadJson } from '@/utils/util';
 import { useRequest } from '@umijs/max';
-import { App, Button, Layout, Row, Space, Table, Tooltip } from 'antd';
+import ListPagination from '@/features/lists/ListPagination';
+import { Alert, App, Button, Layout, Row, Space, Table, Tooltip } from 'antd';
 import React, { forwardRef, useImperativeHandle, useState } from 'react';
 import OntoEditModal from '../OntoEditModal';
 import styles from './index.less';
@@ -24,7 +25,7 @@ const OntoObjList = forwardRef<
     canMutate?: boolean;
   }
 >(({ atlasId, readonly = false, canMutate = true }, ref) => {
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [current, setPageCurrent] = useState(1);
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
   const [entitySelectedRowKeys, setEntitySelectedRowKeys] = useState([]);
@@ -39,6 +40,7 @@ const OntoObjList = forwardRef<
     refresh: refreshOntoData,
     run: OntoTableRun,
     loading: OntoTableLoading,
+    error: OntoTableError,
   } = useRequest<ApiResultListNodeVO>(pageNode, {
     formatResult: (res) => {
       return { ...res };
@@ -78,14 +80,14 @@ const OntoObjList = forwardRef<
   const OntoTotal = OntoData?.addition?.total ? OntoData?.addition?.total : 0;
 
   /** 表格变化处理函数 */
-  const handlePageChange = (pagination: any) => {
-    const { current: newCurrent, pageSize: newPageSize } = pagination;
-    setPageCurrent(newCurrent);
+  const handlePageChange = (newCurrent: number, newPageSize: number) => {
+    const nextPage = newPageSize === pageSize ? newCurrent : 1;
+    setPageCurrent(nextPage);
     setPageSize(newPageSize);
     OntoTableRun({
       graphId: atlasId,
       graphType: 'ONTOLOGY',
-      pageNum: newCurrent,
+      pageNum: nextPage,
       pageSize: newPageSize,
     });
   };
@@ -395,6 +397,14 @@ const OntoObjList = forwardRef<
           readonly={!canMutate}
           showImport={true}
         />
+        {OntoTableError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="本体对象读取失败"
+            action={<Button onClick={() => void refreshOntoData()}>重试</Button>}
+          />
+        ) : null}
         <Table
           size="small"
           columns={ontoColumns}
@@ -408,15 +418,9 @@ const OntoObjList = forwardRef<
             columnWidth: 30,
             ...rowSelection,
           }}
-          pagination={{
-            current: current,
-            pageSize: pageSize,
-            showSizeChanger: true,
-            total: OntoTotal,
-            showTotal: (total) => `共 ${total} 条`,
-          }}
+          pagination={false}
           scroll={{ y: 'calc(100vh - 292px)' }}
-          onChange={handlePageChange}
+          locale={{ emptyText: OntoTableError ? '列表读取失败' : '暂无本体对象' }}
         />
         {canMutate && OntoData?.data?.length > 0 && (
           <Row className={styles.batchActions}>
@@ -427,6 +431,13 @@ const OntoObjList = forwardRef<
             />
           </Row>
         )}
+        <ListPagination
+          current={current}
+          pageSize={pageSize}
+          total={OntoTotal}
+          loading={OntoTableLoading || Boolean(OntoTableError)}
+          onChange={handlePageChange}
+        />
       </Layout>
 
       {/* 本体对象编辑与新建弹窗 */}

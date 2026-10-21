@@ -15,7 +15,23 @@ export const createOAuthClient = (data: { displayName: string; redirectUri: stri
 export const disableOAuthClient = (id: string) => request<{ status: string }>('/api/v1/admin/oauth/clients/' + encodeURIComponent(id), { method: 'DELETE' });
 
 export type AuditEvent = { id: number; eventType: string; actorUserId: string | null; details: Record<string, unknown>; createdAt: string | null };
-export const getAuditEvents = (limit: number, beforeId?: number) => request<AuditEvent[]>('/api/v1/admin/audit-events', { method: 'GET', params: { limit, beforeId } });
+export type AuditEventFilters = {
+  startTime?: string;
+  endTime?: string;
+  eventTypes?: string[];
+  actorUserId?: string;
+};
+export const getAuditEvents = (limit: number, beforeId?: number, filters: AuditEventFilters = {}) => request<AuditEvent[]>('/api/v1/admin/audit-events', {
+  method: 'GET',
+  // 可选筛选参数兼容旧客户端；返回仍保持原来的审计记录数组结构。
+  params: {
+    limit,
+    beforeId,
+    ...filters,
+    // Spring 将逗号分隔字符串转换为 List；统一查询编码避免数组序列化器差异。
+    eventTypes: filters.eventTypes?.join(','),
+  },
+});
 
 export type AppAuthorization = { id: string; applicationName: string; scopes: string; authorizedAt: string; absoluteExpiresAt: string; revokedAt: string | null };
 export const getAppAuthorizations = () => request<AppAuthorization[]>('/api/v1/auth/app-authorizations', { method: 'GET' });

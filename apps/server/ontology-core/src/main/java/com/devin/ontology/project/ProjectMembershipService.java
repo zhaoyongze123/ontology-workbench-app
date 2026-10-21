@@ -40,7 +40,7 @@ public class ProjectMembershipService {
         List<ProjectMemberView> rows = jdbc.query(
                 "SELECT u.id, u.username, u.display_name, m.role FROM ontology.og_project_member m "
                         + "JOIN ontology.og_user u ON u.id = m.user_id WHERE m.project_id = ? "
-                        + "ORDER BY CASE m.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END, u.username "
+                        + "ORDER BY CASE m.role WHEN 'OWNER' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END, u.username, u.id "
                         + "LIMIT ? OFFSET ?",
                 (rs, n) -> new ProjectMemberView(rs.getString("id"), rs.getString("username"),
                         rs.getString("display_name"), ProjectRole.valueOf(rs.getString("role"))),
@@ -56,7 +56,7 @@ public class ProjectMembershipService {
                 + "WHERE target_user_id = ? AND status = 'PENDING' AND expires_time > NOW()", Long.class, userId);
         List<ProjectInvitationView> rows = jdbc.query(invitationSelect()
                         + " WHERE i.target_user_id = ? AND i.status = 'PENDING' AND i.expires_time > NOW() "
-                        + "ORDER BY i.created_time DESC LIMIT ? OFFSET ?",
+                        + "ORDER BY i.created_time DESC, i.id DESC LIMIT ? OFFSET ?",
                 ProjectMembershipService::mapInvitation, userId, pageSize, offset(pageNum, pageSize));
         return new ProjectPage<>(rows, pageNum, pageSize, total == null ? 0 : total);
     }
@@ -74,7 +74,7 @@ public class ProjectMembershipService {
                 + "(u.username ILIKE ? ESCAPE E'\\\\' OR u.display_name ILIKE ? ESCAPE E'\\\\')";
         Long total = jdbc.queryForObject("SELECT COUNT(*)" + where, Long.class, pattern, pattern);
         List<ProjectUserOption> rows = jdbc.query("SELECT u.id, u.username, u.display_name" + where
-                        + " ORDER BY u.username LIMIT ? OFFSET ?",
+                        + " ORDER BY u.username, u.id LIMIT ? OFFSET ?",
                 (rs, n) -> new ProjectUserOption(rs.getString("id"), rs.getString("username"),
                         rs.getString("display_name")), pattern, pattern, pageSize, offset(pageNum, pageSize));
         return new ProjectPage<>(rows, pageNum, pageSize, total == null ? 0 : total);

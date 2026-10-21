@@ -44,6 +44,7 @@ public class EntityDao extends ServiceImpl<EntityMapper, Entity> {
                 .in(!CollectionUtils.isEmpty(queryVO.getNodeIdList()), Entity::getId, queryVO.getNodeIdList())
                 .in(!CollectionUtils.isEmpty(queryVO.getLinkOntologyNodeIdList()), Entity::getOntologyId, queryVO.getLinkOntologyNodeIdList())
                 .orderByDesc(Entity::getUpdateTime)
+                .orderByDesc(Entity::getId)
                 .page(page);
     }
 
@@ -56,6 +57,7 @@ public class EntityDao extends ServiceImpl<EntityMapper, Entity> {
         return lambdaQuery()
                 .eq(Entity::getGraphId, graphId)
                 .orderByDesc(Entity::getUpdateTime)
+                .orderByDesc(Entity::getId)
                 .list();
     }
 }

@@ -4,7 +4,9 @@ import { getLinkOntologyNodeList } from '@/services_v1/graphService';
 import { deleteNode, pageNode } from '@/services_v1/nodeService';
 import { ApiResultListNodeVO, NodeVO } from '@/services_v1/typings';
 import { useRequest } from '@umijs/max';
+import ListPagination from '@/features/lists/ListPagination';
 import {
+  Alert,
   App,
   Button,
   Layout,
@@ -28,7 +30,7 @@ const EntityObjList = forwardRef<
     readonly?: boolean;
   }
 >(({ atlasId, readonly = false }, ref) => {
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [current, setPageCurrent] = useState(1);
   const [entitySelectedRowKeys, setEntitySelectedRowKeys] = useState<
     React.Key[]
@@ -57,6 +59,7 @@ const EntityObjList = forwardRef<
     refresh: refreshEntityData,
     run: entityTableRun,
     loading: entityTableLoading,
+    error: entityTableError,
   } = useRequest<ApiResultListNodeVO>(pageNode, {
     formatResult: (res) => {
       return { ...res };
@@ -112,13 +115,11 @@ const EntityObjList = forwardRef<
     : 0;
 
   /** 实体对象表格分页和筛选 */
-  const handleEntityTableChange = (pagination: any, filters: any) => {
-    const { current: newCurrent, pageSize: newPageSize } = pagination;
-    setPageCurrent(newCurrent);
-    setPageSize(newPageSize);
+  const handleEntityFilterChange = (filters: any) => {
     // 处理关联本体筛选
     const ontologyFilter = filters?.linkOntologyName || [];
     setSelectedOntologyNames(ontologyFilter);
+    setPageCurrent(1);
     // 根据筛选的本体名称获取对应的ID列表
     const linkOntologyNodeIdList =
       ontologyFilter.length > 0
@@ -129,8 +130,27 @@ const EntityObjList = forwardRef<
     entityTableRun({
       graphId: atlasId,
       graphType: 'ENTITY',
-      pageNum: newCurrent,
-      pageSize: newPageSize,
+      pageNum: 1,
+      pageSize,
+      linkOntologyNodeIdList,
+    });
+  };
+
+  const handleEntityPageChange = (nextPage: number, nextPageSize: number) => {
+    const currentPage = nextPageSize === pageSize ? nextPage : 1;
+    setPageCurrent(currentPage);
+    setPageSize(nextPageSize);
+    const linkOntologyNodeIdList =
+      selectedOntologyNames.length > 0
+        ? ontologyNodeListRes?.data
+            ?.filter((item: any) => selectedOntologyNames.includes(item.name))
+            .map((item: any) => item.id)
+        : undefined;
+    entityTableRun({
+      graphId: atlasId,
+      graphType: 'ENTITY',
+      pageNum: currentPage,
+      pageSize: nextPageSize,
       linkOntologyNodeIdList,
     });
   };
@@ -393,6 +413,14 @@ const EntityObjList = forwardRef<
             message.info('实体对象导入功能待实现');
           }}
         />
+        {entityTableError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="实体对象列表读取失败"
+            action={<Button onClick={() => void refreshEntityData()}>重试</Button>}
+          />
+        ) : null}
         <Table
           size="small"
           columns={entityColumns as any}
@@ -406,15 +434,10 @@ const EntityObjList = forwardRef<
             columnWidth: 30,
             ...rowSelection,
           }}
-          pagination={{
-            current: current,
-            pageSize: pageSize,
-            total: entityTotal,
-            showSizeChanger: true,
-            showTotal: (total) => `共 ${total} 条`,
-          }}
+          pagination={false}
           scroll={{ y: 'calc(100vh - 292px)' }}
-          onChange={handleEntityTableChange}
+          locale={{ emptyText: entityTableError ? '列表读取失败' : '暂无实体对象' }}
+          onChange={(_, filters) => handleEntityFilterChange(filters)}
         />
         {!readonly && entityRes?.data?.length > 0 && (
           <Row className={styles.batchActions}>
@@ -425,6 +448,13 @@ const EntityObjList = forwardRef<
             />
           </Row>
         )}
+        <ListPagination
+          current={current}
+          pageSize={pageSize}
+          total={entityTotal}
+          loading={entityTableLoading || Boolean(entityTableError)}
+          onChange={handleEntityPageChange}
+        />
       </Layout>
 
       {/* 实体对象编辑与新建弹窗 */}
