@@ -5,6 +5,10 @@ import {
   ADMIN_TIME_ZONE_LABEL,
   formatAdminDateTime,
 } from '@/features/admin/dateTime';
+import {
+  OAUTH_SCOPE_OPTIONS as SCOPE_OPTIONS,
+  oauthScopeLabel,
+} from '@/features/admin/oauthScopePresentation';
 import OneTimeValuesModal from '@/features/admin/OneTimeValuesModal';
 import {
   createOAuthClient,
@@ -16,6 +20,7 @@ import {
 import { useAdminRequestError } from '@/features/admin/useAdminRequestError';
 import { useCurrentUser } from '@/features/auth/context';
 import { normalizeApiError } from '@/features/errors/apiError';
+import ListPagination from '@/features/lists/ListPagination';
 import { ApiOutlined, CopyOutlined } from '@ant-design/icons';
 import {
   Alert,
@@ -34,19 +39,8 @@ import {
   Tooltip,
   Typography,
 } from 'antd';
-import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
-import React, { useEffect, useRef, useState } from 'react';
-
-const SCOPE_OPTIONS = [
-  { value: 'profile', label: '基本身份', description: 'profile' },
-  { value: 'ontology.read', label: '图谱读取', description: 'ontology.read' },
-  { value: 'ontology.write', label: '图谱修改', description: 'ontology.write' },
-  {
-    value: 'ontology.manage',
-    label: '项目与成员管理',
-    description: 'ontology.manage',
-  },
-];
+import type { ColumnsType } from 'antd/es/table';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 type CreateClientFields = {
   displayName: string;
@@ -89,6 +83,8 @@ const AdminOAuthClientsPage: React.FC = () => {
   const resolveFailure = useAdminRequestError();
   const [createForm] = Form.useForm<CreateClientFields>();
   const [items, setItems] = useState<AppClient[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -150,9 +146,26 @@ const AdminOAuthClientsPage: React.FC = () => {
     };
   }, [actor.systemAdmin]);
 
+  const orderedItems = useMemo(
+    () =>
+      [...items].sort((left, right) => {
+        const byCreatedAt = right.createdAt.localeCompare(left.createdAt);
+        return byCreatedAt || right.id.localeCompare(left.id);
+      }),
+    [items],
+  );
+  const pageRows = orderedItems.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(items.length / pageSize));
+    if (currentPage > lastPage) setCurrentPage(lastPage);
+  }, [currentPage, items.length, pageSize]);
+
   if (!actor.systemAdmin) {
     return (
-      <AdminPage title="OAuth 客户端" description="此页面仅供系统管理员使用。">
+      <AdminPage title="OAuth 客户端">
         <Result status="403" title="无权访问" />
       </AdminPage>
     );
@@ -382,12 +395,7 @@ const AdminOAuthClientsPage: React.FC = () => {
       render: (scopes: string[]) => (
         <Space wrap size={[4, 4]}>
           {scopes.map((scope) => {
-            const known = SCOPE_OPTIONS.find((item) => item.value === scope);
-            return (
-              <Tag key={scope}>
-                {known ? known.label : `其他权限（${scope}）`}
-              </Tag>
-            );
+            return <Tag key={scope}>{oauthScopeLabel(scope)}</Tag>;
           })}
         </Space>
       ),
@@ -436,20 +444,12 @@ const AdminOAuthClientsPage: React.FC = () => {
     },
   ];
 
-  const pagination: TablePaginationConfig = {
-    pageSize: 20,
-    hideOnSinglePage: true,
-    showSizeChanger: items.length > 20,
-    showTotal: (count) => `共 ${count} 条`,
-  };
-
-  const showTable = loading || items.length > 0 || !loadError;
+  const showTable = loading || items.length > 0 || (hasLoaded && !loadError);
   const detail = selectedClient;
 
   return (
     <AdminPage
       title="OAuth 客户端"
-      description="管理允许访问 Ontology 的应用，例如 Workbench。权限范围是可申请上限，实际操作仍受当前用户的项目权限控制。"
       actions={
         <Button
           type="primary"
@@ -510,13 +510,25 @@ const AdminOAuthClientsPage: React.FC = () => {
         <Table<AppClient>
           rowKey="id"
           columns={columns}
-          dataSource={items}
+          dataSource={pageRows}
           loading={loading}
-          locale={{ emptyText: '暂无 OAuth 客户端' }}
+          locale={{
+            emptyText: loadError ? '列表读取失败' : '暂无 OAuth 客户端',
+          }}
           scroll={{ x: 1240 }}
-          pagination={pagination}
+          pagination={false}
         />
       ) : null}
+      <ListPagination
+        current={currentPage}
+        pageSize={pageSize}
+        total={items.length}
+        loading={loading}
+        onChange={(nextPage, nextSize) => {
+          setPageSize(nextSize);
+          setCurrentPage(nextPage);
+        }}
+      />
 
       <Modal
         title="注册 OAuth 客户端"
@@ -809,16 +821,7 @@ const AdminOAuthClientsPage: React.FC = () => {
               <Descriptions.Item label="允许申请的权限">
                 <Space wrap>
                   {detail.scopes.map((scope) => {
-                    const known = SCOPE_OPTIONS.find(
-                      (item) => item.value === scope,
-                    );
-                    return (
-                      <Tag key={scope}>
-                        {known
-                          ? `${known.label}（${scope}）`
-                          : `其他权限（${scope}）`}
-                      </Tag>
-                    );
+                    return <Tag key={scope}>{oauthScopeLabel(scope)}</Tag>;
                   })}
                 </Space>
               </Descriptions.Item>

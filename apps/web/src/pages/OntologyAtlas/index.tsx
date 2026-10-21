@@ -1,4 +1,6 @@
 import ImportGraphPop from '@/components/ImportGraphPop';
+import PageShell from '@/features/layout/PageShell';
+import ListPagination from '@/features/lists/ListPagination';
 import { useProjectAccess } from '@/features/projects/useProjectAccess';
 import {
   deleteGraph,
@@ -8,18 +10,17 @@ import {
 import { ApiResultListGraphVO, GraphVO } from '@/services_v1/typings';
 import { GraphType } from '@/utils/typeEnum';
 import { downloadJson } from '@/utils/util';
-import { ImportOutlined, LeftOutlined, PlusOutlined } from '@ant-design/icons';
+import { ImportOutlined, PlusOutlined } from '@ant-design/icons';
 import { history, Link, useParams, useRequest } from '@umijs/max';
-import { App, Button, Col, Row, Spin, Table } from 'antd';
+import { Alert, App, Button, Row, Space, Spin, Table } from 'antd';
 import { useState } from 'react';
-import styles from './index.less';
 import OntoGraphAdd from './OntoGraphAdd';
 
 /** 本体图谱管理 */
 function OntologyManage() {
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isImportModalVisible, setIsImportModalVisible] = useState(false);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [current, setPageCurrent] = useState(1);
   const params = useParams<{ id: string }>();
   const organizationId = params.id || '';
@@ -34,6 +35,7 @@ function OntologyManage() {
     refresh: refreshOntologyList,
     run: tableRun,
     loading: tableLoading,
+    error: tableError,
   } = useRequest<ApiResultListGraphVO>(pageGraph, {
     formatResult: (res) => {
       return { ...res };
@@ -54,13 +56,13 @@ function OntologyManage() {
     : 0;
 
   /** 表格变化处理函数 */
-  const handlePageChange = (pagination: any) => {
-    const { current: newCurrent, pageSize: newPageSize } = pagination;
-    setPageCurrent(newCurrent);
+  const handlePageChange = (newCurrent: number, newPageSize: number) => {
+    const nextPage = newPageSize === pageSize ? newCurrent : 1;
+    setPageCurrent(nextPage);
     setPageSize(newPageSize);
     tableRun({
       graphType: 'ONTOLOGY',
-      pageNum: newCurrent,
+      pageNum: nextPage,
       pageSize: newPageSize,
       organizationId: organizationId,
     });
@@ -87,7 +89,7 @@ function OntologyManage() {
   /** 删除本体图谱 */
   const handleDelete = (record: GraphVO) => {
     if (!record.id) {
-      message.warning('图谱ID不存在，无法删除');
+      message.warning('无法识别此图谱，请刷新列表后重试。');
       return;
     }
     const graphId = record.id;
@@ -132,7 +134,7 @@ function OntologyManage() {
   /** 导出本体图谱 */
   const handleExport = async (record: GraphVO) => {
     if (!record.id) {
-      message.warning('图谱ID不存在，无法导出');
+      message.warning('无法识别此图谱，请刷新列表后重试。');
       return;
     }
     const graphName = record.name || '本体图谱';
@@ -249,83 +251,91 @@ function OntologyManage() {
           <Button type="link" onClick={() => handleExport(record)}>
             导出
           </Button>
-          {canDeleteGraph ? <Button type="link" onClick={() => handleDelete(record)}>删除</Button> : null}
+          {canDeleteGraph ? (
+            <Button type="link" onClick={() => handleDelete(record)}>
+              删除
+            </Button>
+          ) : null}
         </Row>
       ),
     },
   ];
 
   return (
-    <Row className={styles.ontologyManage}>
-      <Col span={24}>
-        <Row className={styles.actionButtons}>
-          <Button
-            type="default"
-            icon={<LeftOutlined />}
-            onClick={() => {
-              /** 返回项目管理页面 */
-              history.push('/home');
-            }}
-          >
-            返回
-          </Button>
-          <Row className={styles.rightButtons}>
-            {canEdit ? <Button
+    <PageShell
+      title="本体图谱"
+      actions={
+        <Space wrap>
+          {canEdit ? (
+            <Button
               type="primary"
               icon={<PlusOutlined />}
-              onClick={() => {
-                setIsCreateModalVisible(true);
-              }}
+              onClick={() => setIsCreateModalVisible(true)}
             >
               新建本体图谱
-            </Button> : null}
-            {canEdit ? <Button
+            </Button>
+          ) : null}
+          {canEdit ? (
+            <Button
               icon={<ImportOutlined />}
               onClick={() => setIsImportModalVisible(true)}
             >
               导入本体图谱
-            </Button> : null}
-          </Row>
-        </Row>
-        <Spin spinning={tableLoading} tip="数据加载中...">
-          <Table
-            size="small"
-            columns={columns}
-            dataSource={ontologyList?.data?.map((item: GraphVO) => ({
-              ...item,
-            }))}
-            rowKey={(record: GraphVO) => record.id as string}
-            pagination={{
-              current: current,
-              pageSize: pageSize,
-              showSizeChanger: true,
-              total: total,
-              showTotal: (total) => `共 ${total} 条`,
-            }}
-            scroll={{ y: 'calc(100vh - 292px)' }}
-            onChange={handlePageChange}
-          />
-        </Spin>
-
-        {/* 新建本体图谱弹窗组件 */}
-        <OntoGraphAdd
-          isVisible={isCreateModalVisible}
-          onCancel={() => setIsCreateModalVisible(false)}
-          onSuccess={handleCreateSuccess}
-          organizationId={organizationId}
+            </Button>
+          ) : null}
+        </Space>
+      }
+    >
+      {tableError ? (
+        <Alert
+          style={{ marginBottom: 12 }}
+          type="error"
+          showIcon
+          message="本体图谱列表读取失败"
+          action={
+            <Button onClick={() => void refreshOntologyList()}>重试</Button>
+          }
         />
-
-        {/* 导入本体图谱弹窗组件 */}
-        <ImportGraphPop
-          isVisible={isImportModalVisible}
-          onCancel={() => setIsImportModalVisible(false)}
-          onSubmit={handleImportSubmit}
-          title="导入本体图谱"
-          organizationId={organizationId}
-          graphType={GraphType.ONTOLOGY}
+      ) : null}
+      <Spin spinning={tableLoading} tip="数据加载中...">
+        <Table
+          size="small"
+          columns={columns}
+          dataSource={ontologyList?.data?.map((item: GraphVO) => ({
+            ...item,
+          }))}
+          rowKey={(record: GraphVO) => record.id as string}
+          pagination={false}
+          locale={{ emptyText: tableError ? '列表读取失败' : '暂无本体图谱' }}
+          scroll={{ y: 'calc(100vh - 292px)' }}
         />
-      </Col>
-    </Row>
+      </Spin>
+      <ListPagination
+        current={current}
+        pageSize={pageSize}
+        total={total}
+        loading={tableLoading || Boolean(tableError)}
+        onChange={handlePageChange}
+      />
+
+      {/* 新建本体图谱弹窗组件 */}
+      <OntoGraphAdd
+        isVisible={isCreateModalVisible}
+        onCancel={() => setIsCreateModalVisible(false)}
+        onSuccess={handleCreateSuccess}
+        organizationId={organizationId}
+      />
+
+      {/* 导入本体图谱弹窗组件 */}
+      <ImportGraphPop
+        isVisible={isImportModalVisible}
+        onCancel={() => setIsImportModalVisible(false)}
+        onSubmit={handleImportSubmit}
+        title="导入本体图谱"
+        organizationId={organizationId}
+        graphType={GraphType.ONTOLOGY}
+      />
+    </PageShell>
   );
 }
 

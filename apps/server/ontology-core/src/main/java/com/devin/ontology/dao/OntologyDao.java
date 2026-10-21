@@ -42,6 +42,7 @@ public class OntologyDao extends ServiceImpl<OntologyMapper, Ontology> {
                 .eq(Ontology::getGraphId, queryVO.getGraphId())
                 .in(!CollectionUtils.isEmpty(queryVO.getNodeIdList()), Ontology::getId, queryVO.getNodeIdList())
                 .orderByDesc(Ontology::getUpdateTime)
+                .orderByDesc(Ontology::getId)
                 .page(page);
     }
 
@@ -54,6 +55,7 @@ public class OntologyDao extends ServiceImpl<OntologyMapper, Ontology> {
         return lambdaQuery()
                 .eq(Ontology::getGraphId, graphId)
                 .orderByDesc(Ontology::getUpdateTime)
+                .orderByDesc(Ontology::getId)
                 .list();
     }
 

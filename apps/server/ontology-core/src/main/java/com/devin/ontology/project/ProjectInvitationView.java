@@ -9,6 +9,7 @@ public record ProjectInvitationView(
         String projectName,
         String inviterUserId,
         String inviterDisplayName,
+        String inviterUsername,
         String targetUserId,
         String targetDisplayName,
         ProjectRole role,

@@ -1,15 +1,14 @@
-import { request } from 'umi';
 import { localRequest } from '@/features/errors/localRequest';
 import {
-  ApiResultVoid,
-  ApiResultOrganizationVO,
   ApiResultListOrganizationVO,
+  ApiResultOrganizationVO,
+  ApiResultVoid,
 } from './typings';
 
 /**
  * 修改项目 PUT /api/v1/organization/edit
  */
-export async function editOrganization (
+export async function editOrganization(
   data?: {
     /** 项目id */
     id?: string;
@@ -32,7 +31,7 @@ export async function editOrganization (
 /**
  * 新建项目 POST /api/v1/organization/save
  */
-export async function saveOrganization (
+export async function saveOrganization(
   data?: {
     /** 项目名称 */
     name?: string;
@@ -53,7 +52,7 @@ export async function saveOrganization (
 /**
  * 删除项目 POST /api/v1/organization/delete
  */
-export async function deleteOrganization (
+export async function deleteOrganization(
   params?: {
     /** 项目删除Id */
     organizationId: string;
@@ -72,20 +71,25 @@ export async function deleteOrganization (
 /**
  * 分页查询项目 GET /api/v1/organization/page
  */
-export async function organizationPage (
+export async function organizationPage(
   params?: {
     /** 当前页码 */
     pageNum?: number;
     /** 每页数量 */
     pageSize?: number;
+    /** 项目名称筛选词；项目切换器通过同一接口远程搜索和恢复当前项目名称 */
+    keyword?: string;
   },
   options?: Record<string, any>,
 ) {
-  return request<ApiResultListOrganizationVO>(`/api/v1/organization/page`, {
-    method: 'GET',
-    params: {
-      ...params,
+  return localRequest<ApiResultListOrganizationVO>(
+    `/api/v1/organization/page`,
+    {
+      method: 'GET',
+      params: {
+        ...params,
+      },
+      ...(options || {}),
     },
-    ...(options || {}),
-  });
+  );
 }

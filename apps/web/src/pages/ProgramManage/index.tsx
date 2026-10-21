@@ -1,24 +1,23 @@
+import { normalizeApiError } from '@/features/errors/apiError';
+import PageShell from '@/features/layout/PageShell';
+import ListPagination from '@/features/lists/ListPagination';
+import ProjectRowActions from '@/features/projects/ProjectRowActions';
 import {
   deleteOrganization,
   editOrganization,
   organizationPage,
   saveOrganization,
 } from '@/services_v1/organizationService';
-import ProjectRowActions from '@/features/projects/ProjectRowActions';
 import {
   ApiResultListOrganizationVO,
   OrganizationVO,
 } from '@/services_v1/typings';
-import {
-  PlusOutlined,
-  ProjectOutlined,
-} from '@ant-design/icons';
+import { PlusOutlined, ProjectOutlined } from '@ant-design/icons';
 import { history, Link, useRequest } from '@umijs/max';
-import { App, Button, Row, Space, Table, Typography } from 'antd';
+import { Alert, App, Button, Table } from 'antd';
 import { useState } from 'react';
 import styles from './index.less';
 import ProgramPop from './ProgramPop';
-import { normalizeApiError } from '@/features/errors/apiError';
 
 function ProgramManage() {
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -27,7 +26,7 @@ function ProgramManage() {
     null,
   );
   const [current, setPageCurrent] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const { message, modal } = App.useApp();
 
   /** 获取项目列表 */
@@ -36,6 +35,7 @@ function ProgramManage() {
     refresh: refreshProgramList,
     run: tableRun,
     loading: tableLoading,
+    error: tableError,
   } = useRequest<ApiResultListOrganizationVO>(organizationPage, {
     formatResult: (res) => {
       return { ...res };
@@ -51,12 +51,12 @@ function ProgramManage() {
   const total = programList?.addition?.total ? programList?.addition?.total : 0;
 
   /** 表格变化处理函数 */
-  const handlePageChange = (pagination: any) => {
-    const { current: newCurrent, pageSize: newPageSize } = pagination;
-    setPageCurrent(newCurrent);
+  const handlePageChange = (newCurrent: number, newPageSize: number) => {
+    const nextPage = newPageSize === pageSize ? newCurrent : 1;
+    setPageCurrent(nextPage);
     setPageSize(newPageSize);
     tableRun({
-      pageNum: newCurrent,
+      pageNum: nextPage,
       pageSize: newPageSize,
     });
   };
@@ -238,22 +238,21 @@ function ProgramManage() {
       key: 'action',
       width: 360,
       render: (_: any, record: OrganizationVO) => (
-        <ProjectRowActions projectId={record.id as string}
-          onEdit={() => handleEdit(record)} onDelete={() => handleDelete(record)}
-          onLeave={refreshProgramList} />
+        <ProjectRowActions
+          projectId={record.id as string}
+          onEdit={() => handleEdit(record)}
+          onDelete={() => handleDelete(record)}
+          onLeave={refreshProgramList}
+        />
       ),
     },
   ];
 
   return (
-    <Row className={styles.programManage}>
-      <Row className={styles.header}>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          <Space>
-            <ProjectOutlined />
-            项目管理
-          </Space>
-        </Typography.Title>
+    <PageShell
+      title="项目管理"
+      titleIcon={<ProjectOutlined aria-hidden="true" />}
+      actions={
         <Button
           type="primary"
           icon={<PlusOutlined />}
@@ -262,27 +261,41 @@ function ProgramManage() {
         >
           新建项目
         </Button>
-      </Row>
-
-      <Table
-        size="small"
-        columns={columns}
-        loading={tableLoading}
-        dataSource={programList?.data?.map((item: OrganizationVO) => ({
-          ...item,
-        }))}
-        rowKey={(record: OrganizationVO) => record.id as string}
-        pagination={{
-          current: current,
-          pageSize: pageSize,
-          showSizeChanger: true,
-          total: total,
-          showTotal: (total) => `共 ${total} 条`,
-        }}
-        onChange={handlePageChange}
-        sticky={{ offsetHeader: 0 }}
-        scroll={{ y: 'calc(100vh - 292px)' }}
-      />
+      }
+    >
+      <div className={styles.programManage}>
+        {tableError ? (
+          <Alert
+            style={{ marginBottom: 12 }}
+            type="error"
+            showIcon
+            message="项目列表读取失败"
+            action={
+              <Button onClick={() => void refreshProgramList()}>重试</Button>
+            }
+          />
+        ) : null}
+        <Table
+          size="small"
+          columns={columns}
+          loading={tableLoading}
+          dataSource={programList?.data?.map((item: OrganizationVO) => ({
+            ...item,
+          }))}
+          rowKey={(record: OrganizationVO) => record.id as string}
+          pagination={false}
+          locale={{ emptyText: tableError ? '列表读取失败' : '暂无项目' }}
+          sticky={{ offsetHeader: 56 }}
+          scroll={{ y: 'calc(100vh - 292px)' }}
+        />
+        <ListPagination
+          current={current}
+          pageSize={pageSize}
+          total={total}
+          loading={tableLoading || Boolean(tableError)}
+          onChange={handlePageChange}
+        />
+      </div>
 
       {/* 使用共用的项目弹窗组件 */}
       <ProgramPop
@@ -292,7 +305,7 @@ function ProgramManage() {
         initialValues={currentProgram || undefined}
         isEdit={isEditMode}
       />
-    </Row>
+    </PageShell>
   );
 }
 

@@ -1,5 +1,6 @@
 import BatchActionBtn from '@/components/BatchActionBtn';
 import TabsPageTop from '@/components/TableAction';
+import ListPagination from '@/features/lists/ListPagination';
 import {
   deleteRelationship,
   getRelationshipOptional,
@@ -10,7 +11,7 @@ import {
   RelationshipVO,
 } from '@/services_v1/typings';
 import { useRequest } from '@umijs/max';
-import { App, Button, Layout, Row, Space, Table, Tooltip } from 'antd';
+import { Alert, App, Button, Layout, Row, Space, Table, Tooltip } from 'antd';
 import React, { forwardRef, useImperativeHandle, useState } from 'react';
 import EntityRelationModal from '../EntityRelationModal';
 import styles from './index.less';
@@ -22,7 +23,7 @@ const EntityRelationList = forwardRef<
     readonly?: boolean;
   }
 >(({ atlasId, readonly = false }, ref) => {
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [currentRelationList, setCurrentRelationList] = useState(1);
   const [relationSelectedRowKeys, setRelationSelectedRowKeys] = useState<
     React.Key[]
@@ -54,6 +55,7 @@ const EntityRelationList = forwardRef<
     refresh: refreshEntityRelationData,
     run: entityRelationTableRun,
     loading: entityRelationTableLoading,
+    error: entityRelationTableError,
   } = useRequest<ApiResultListRelationshipVO>(pageRelationship, {
     formatResult: (res) => {
       return { ...res };
@@ -109,13 +111,11 @@ const EntityRelationList = forwardRef<
     : 0;
 
   /** 实体关系表格分页和筛选 */
-  const handleRelationTableChange = (pagination: any, filters: any) => {
-    const { current, pageSize } = pagination;
-    setCurrentRelationList(current);
-    setPageSize(pageSize);
+  const handleRelationFilterChange = (filters: any) => {
     // 处理关系名称筛选
     const relationNameFilter = filters?.name || [];
     setSelectedRelationNames(relationNameFilter);
+    setCurrentRelationList(1);
     // 根据筛选的关系名称获取对应的ID列表
     const filteredRelationshipIdList =
       relationNameFilter.length > 0
@@ -126,8 +126,27 @@ const EntityRelationList = forwardRef<
     entityRelationTableRun({
       graphId: atlasId,
       graphType: 'ENTITY',
-      pageNum: current,
-      pageSize: pageSize,
+      pageNum: 1,
+      pageSize,
+      relationshipIdList: filteredRelationshipIdList,
+    });
+  };
+
+  const handleRelationPageChange = (nextPage: number, nextPageSize: number) => {
+    const currentPage = nextPageSize === pageSize ? nextPage : 1;
+    setCurrentRelationList(currentPage);
+    setPageSize(nextPageSize);
+    const filteredRelationshipIdList =
+      selectedRelationNames.length > 0
+        ? relationshipOptionalRes?.data
+            ?.filter((item: any) => selectedRelationNames.includes(item.name))
+            .map((item: any) => item.id)
+        : undefined;
+    entityRelationTableRun({
+      graphId: atlasId,
+      graphType: 'ENTITY',
+      pageNum: currentPage,
+      pageSize: nextPageSize,
       relationshipIdList: filteredRelationshipIdList,
     });
   };
@@ -195,7 +214,7 @@ const EntityRelationList = forwardRef<
   /** 删除单个实体关系 */
   const handleDelRelation = (record: RelationshipVO) => {
     if (!record.id) {
-      message.warning('关系ID不存在，无法删除');
+      message.warning('无法识别此实体关系，请刷新列表后重试。');
       return;
     }
     const relationId = record.id;
@@ -231,7 +250,7 @@ const EntityRelationList = forwardRef<
     }
     const idList = keys.filter((key): key is string => typeof key === 'string');
     if (idList.length !== keys.length) {
-      message.error('选中的实体关系ID格式不正确');
+      message.error('所选实体关系信息无效，请刷新列表后重试。');
       return;
     }
     modal.confirm({
@@ -365,10 +384,18 @@ const EntityRelationList = forwardRef<
       width: 150,
       render: (_: any, record: RelationshipVO) => (
         <Space size="small">
-          <Button type="link" disabled={readonly} onClick={() => handleRelationEdit(record)}>
+          <Button
+            type="link"
+            disabled={readonly}
+            onClick={() => handleRelationEdit(record)}
+          >
             编辑
           </Button>
-          <Button type="link" disabled={readonly} onClick={() => handleDelRelation(record)}>
+          <Button
+            type="link"
+            disabled={readonly}
+            onClick={() => handleDelRelation(record)}
+          >
             删除
           </Button>
         </Space>
@@ -402,6 +429,18 @@ const EntityRelationList = forwardRef<
             message.info('实体关系导入功能待实现');
           }}
         />
+        {entityRelationTableError ? (
+          <Alert
+            type="error"
+            showIcon
+            message="实体关系列表读取失败"
+            action={
+              <Button onClick={() => void refreshEntityRelationData()}>
+                重试
+              </Button>
+            }
+          />
+        ) : null}
         <Table
           size="small"
           columns={EntityRelationColumns as any}
@@ -410,30 +449,44 @@ const EntityRelationList = forwardRef<
             ...item,
           }))}
           rowKey={(record: RelationshipVO) => record.id as string}
-          rowSelection={readonly ? undefined : {
-            type: 'checkbox',
-            columnWidth: 30,
-            ...rowSelection,
-          }}
-          pagination={{
-            current: currentRelationList,
-            pageSize: pageSize,
-            total: relationTotal,
-            showSizeChanger: true,
-            showTotal: (total) => `共 ${total} 条`,
-          }}
+          rowSelection={
+            readonly
+              ? undefined
+              : {
+                  type: 'checkbox',
+                  columnWidth: 30,
+                  ...rowSelection,
+                }
+          }
+          pagination={false}
           scroll={{ y: 'calc(100vh - 292px)' }}
-          onChange={handleRelationTableChange}
+          locale={{
+            emptyText: entityRelationTableError
+              ? '列表读取失败'
+              : '暂无实体关系',
+          }}
+          onChange={(_, filters) => handleRelationFilterChange(filters)}
         />
-        {!readonly && EntityRelationRes?.data && EntityRelationRes.data.length > 0 && (
-          <Row className={styles.batchActions}>
-            <BatchActionBtn
-              activeTab="relation"
-              selectedRowKeys={relationSelectedRowKeys}
-              onBatchDelete={handleBatchDelete}
-            />
-          </Row>
-        )}
+        {!readonly &&
+          EntityRelationRes?.data &&
+          EntityRelationRes.data.length > 0 && (
+            <Row className={styles.batchActions}>
+              <BatchActionBtn
+                activeTab="relation"
+                selectedRowKeys={relationSelectedRowKeys}
+                onBatchDelete={handleBatchDelete}
+              />
+            </Row>
+          )}
+        <ListPagination
+          current={currentRelationList}
+          pageSize={pageSize}
+          total={relationTotal}
+          loading={
+            entityRelationTableLoading || Boolean(entityRelationTableError)
+          }
+          onChange={handleRelationPageChange}
+        />
       </Layout>
 
       {/* 实体关系编辑与新建弹窗 */}

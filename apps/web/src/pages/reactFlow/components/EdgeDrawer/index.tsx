@@ -170,7 +170,6 @@ const EdgeDrawer: React.FC<{
   useEffect(() => {
     if (relationshipInfo) {
       form.setFieldsValue({
-        id: relationshipInfo.id ?? '',
         labels: relationshipInfo.name ? [relationshipInfo.name] : [],
         label: relationshipInfo.name ?? '',
         description: relationshipInfo.description ?? '',
@@ -279,7 +278,7 @@ const EdgeDrawer: React.FC<{
 
     modal.confirm({
       title: '确认删除',
-      content: '确定要删除该关系吗？此操作不可恢复。',
+      content: '将删除当前选中的关系，不会删除两端节点。删除后不可恢复。',
       okText: '确认',
       cancelText: '取消',
       onOk: async () => {
@@ -320,7 +319,7 @@ const EdgeDrawer: React.FC<{
     <Card
       title={
         <Space>
-          <span>Relationship properties</span>
+          <span>关系属性</span>
           {graphType && (
             <Tag color={graphType === 'ONTOLOGY' ? 'blue' : 'green'}>
               {graphType === 'ONTOLOGY' ? '本体' : '实体'}
@@ -330,7 +329,14 @@ const EdgeDrawer: React.FC<{
       }
       size="small"
       className={styles.card}
-      extra={<Button type="text" icon={<CloseOutlined />} onClick={onClose} />}
+      extra={
+        <Button
+          type="text"
+          aria-label="关闭关系属性"
+          icon={<CloseOutlined aria-hidden="true" />}
+          onClick={onClose}
+        />
+      }
     >
       <Spin spinning={loading}>
         <Form
@@ -353,9 +359,6 @@ const EdgeDrawer: React.FC<{
                 ))}
             </Space>
           </Form.Item>
-          <Form.Item name="id" label="id" style={{ fontWeight: 'bold' }}>
-            <Input disabled size="small" />
-          </Form.Item>
           <Form.Item
             name="label"
             label="关系名称"
@@ -365,7 +368,12 @@ const EdgeDrawer: React.FC<{
               <Select
                 size="small"
                 disabled={readonly}
+                showSearch
+                optionFilterProp="label"
                 loading={optionsLoading}
+                notFoundContent={
+                  optionsLoading ? '正在加载关系…' : '当前图谱暂无可选关系'
+                }
                 onOpenChange={(open) => {
                   if (open) {
                     fetchRelationshipOptions();
@@ -382,7 +390,7 @@ const EdgeDrawer: React.FC<{
           </Form.Item>
           <Form.Item
             name="description"
-            label="关系描述"
+            label="描述"
             style={{ fontWeight: 'bold' }}
           >
             <Input.TextArea
@@ -393,50 +401,63 @@ const EdgeDrawer: React.FC<{
             />
           </Form.Item>
 
+          {/* 系统标识只保存在表单数据中，不要求用户查看或编辑。 */}
+          {Object.prototype.hasOwnProperty.call(properties, 'id') ? (
+            <Form.Item name={['properties', 'id']} hidden>
+              <Input />
+            </Form.Item>
+          ) : null}
+          {Object.prototype.hasOwnProperty.call(properties, '_id') ? (
+            <Form.Item name={['properties', '_id']} hidden>
+              <Input />
+            </Form.Item>
+          ) : null}
           {/* 动态渲染属性字段 */}
           {graphType === 'ENTITY' &&
-            propertyFields.map((key) => {
-              const config = getPropertyFieldConfig(key);
-              const schemaItem = propertySchemaMap[key];
-              const isBoolean = schemaItem?.type === 'BOOLEAN';
+            propertyFields
+              .filter((key) => key !== 'id' && key !== '_id')
+              .map((key) => {
+                const config = getPropertyFieldConfig(key);
+                const schemaItem = propertySchemaMap[key];
+                const isBoolean = schemaItem?.type === 'BOOLEAN';
 
-              return (
-                <Form.Item
-                  key={key}
-                  style={{ fontWeight: 'bold' }}
-                  name={['properties', key]}
-                  label={config.label}
-                  getValueProps={(value) => {
-                    if (isBoolean) {
-                      if (value === 'true') return { value: true };
-                      if (value === 'false') return { value: false };
-                      return { value };
-                    }
-                    return {
-                      value: formatPropertyValue(value),
-                    };
-                  }}
-                >
-                  {isBoolean ? (
-                    <Select
-                      size="small"
-                      disabled={config.disabled || readonly}
-                      options={[
-                        { label: 'true', value: true },
-                        { label: 'false', value: false },
-                      ]}
-                    />
-                  ) : (
-                    <Input.TextArea
-                      size="small"
-                      disabled={config.disabled || readonly}
-                      autoSize={{ minRows: 1, maxRows: 6 }}
-                      maxLength={500}
-                    />
-                  )}
-                </Form.Item>
-              );
-            })}
+                return (
+                  <Form.Item
+                    key={key}
+                    style={{ fontWeight: 'bold' }}
+                    name={['properties', key]}
+                    label={config.label}
+                    getValueProps={(value) => {
+                      if (isBoolean) {
+                        if (value === 'true') return { value: true };
+                        if (value === 'false') return { value: false };
+                        return { value };
+                      }
+                      return {
+                        value: formatPropertyValue(value),
+                      };
+                    }}
+                  >
+                    {isBoolean ? (
+                      <Select
+                        size="small"
+                        disabled={config.disabled || readonly}
+                        options={[
+                          { label: '是', value: true },
+                          { label: '否', value: false },
+                        ]}
+                      />
+                    ) : (
+                      <Input.TextArea
+                        size="small"
+                        disabled={config.disabled || readonly}
+                        autoSize={{ minRows: 1, maxRows: 6 }}
+                        maxLength={500}
+                      />
+                    )}
+                  </Form.Item>
+                );
+              })}
           {graphType === 'ONTOLOGY' && propertySchemaList.length > 0 && (
             <div style={{ marginTop: 16 }}>
               <Row gutter={8} style={{ fontWeight: 'bold', marginBottom: 8 }}>
@@ -570,27 +591,28 @@ const EdgeDrawer: React.FC<{
           )}
         </Form>
       </Spin>
-      <div className={styles.footer}>
-        <Space>
-          <Button
-            danger
-            size="small"
-            onClick={handleDelete}
-            loading={deleteLoading}
-          >
-            删除
-          </Button>
-          <Button
-            type="primary"
-            size="small"
-            onClick={handleSave}
-            loading={saveLoading}
-            disabled={readonly}
-          >
-            保存
-          </Button>
-        </Space>
-      </div>
+      {!readonly ? (
+        <div className={styles.footer}>
+          <Space>
+            <Button
+              danger
+              size="small"
+              onClick={handleDelete}
+              loading={deleteLoading}
+            >
+              删除
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              onClick={handleSave}
+              loading={saveLoading}
+            >
+              保存
+            </Button>
+          </Space>
+        </div>
+      ) : null}
     </Card>
   );
 };

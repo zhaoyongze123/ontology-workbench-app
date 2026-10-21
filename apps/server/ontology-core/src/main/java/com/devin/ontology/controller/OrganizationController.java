@@ -81,11 +81,13 @@ public class OrganizationController {
     @Operation(summary = "分页查询项目", description = "分页查询项目")
     public ApiResult<List<OrganizationVO>> organizationPage(
             @Parameter(name = "pageNum", description = "当前页码") @RequestParam(name = "pageNum", required = false) final Integer pageNum,
-            @Parameter(name = "pageSize", description = "每页数量") @RequestParam(name = "pageSize", required = false) final Integer pageSize
+            @Parameter(name = "pageSize", description = "每页数量") @RequestParam(name = "pageSize", required = false) final Integer pageSize,
+            @Parameter(name = "keyword", description = "按项目名称搜索") @RequestParam(name = "keyword", required = false) final String keyword
     ) {
         OrganizationQueryVO queryVO = new OrganizationQueryVO();
         queryVO.setPageNum(pageNum);
         queryVO.setPageSize(pageSize);
+        queryVO.setKeyword(keyword);
 
         PageResult<OrganizationVO> pageResult = organizationService.pageOrganization(queryVO);
         Addition addition = Addition.of(pageResult);

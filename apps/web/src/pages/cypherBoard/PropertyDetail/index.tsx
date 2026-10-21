@@ -43,7 +43,7 @@ function PropertyDetail({
       <Row className={styles.panelContent}>
         <Col span={24} className={styles.propertySection}>
           <Row className={styles.propertyItem}>
-            <Text strong>节点 ID</Text>
+            <Text strong>节点名称</Text>
           </Row>
 
           <Row className={styles.propertyItem}>

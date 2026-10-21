@@ -159,6 +159,32 @@ class SecurityBoundaryDatabaseIntegrationTest {
     }
 
     @Test
+    void inviteCandidateSearchShowsNamesExcludesMembersAndMarksPendingInvitations() {
+        String candidateId = UUID.randomUUID().toString();
+        fixtureUsers.add(candidateId);
+        jdbc.update("INSERT INTO ontology.og_user(id, username, display_name, enabled) VALUES (?, ?, ?, TRUE)",
+                candidateId, "security_it_candidate_" + candidateId, "可邀请候选人");
+        jdbc.update("INSERT INTO ontology.og_project_invitation(id, project_id, inviter_user_id, inviter_role, "
+                        + "target_user_id, role, expires_time) VALUES (?, ?, ?, 'OWNER', ?, 'EDITOR', NOW() + INTERVAL '1 day')",
+                UUID.randomUUID(), projectId, ownerId, outsiderId);
+
+        var initialPage = membership.inviteCandidates(projectId, null, 1, 20);
+        assertThat(initialPage.records()).extracting(com.devin.ontology.project.ProjectUserOption::id)
+                .contains(outsiderId, candidateId).doesNotContain(ownerId);
+        assertThat(initialPage.records().stream().filter(user -> user.id().equals(outsiderId)).findFirst()
+                .orElseThrow().invitationPending()).isTrue();
+        assertThat(initialPage.records().stream().filter(user -> user.id().equals(candidateId)).findFirst()
+                .orElseThrow().displayName()).isEqualTo("可邀请候选人");
+        assertThat(membership.inviteCandidates(projectId, "可邀请", 1, 20).records())
+                .extracting(com.devin.ontology.project.ProjectUserOption::id).containsExactly(candidateId);
+
+        authenticate(outsiderId);
+        assertThatThrownBy(() -> membership.inviteCandidates(projectId, "", 1, 20))
+                .isInstanceOf(AccessDeniedException.class);
+        authenticate(ownerId);
+    }
+
+    @Test
     void queryIsBoundToAuthorizedGraphAndRejectsWriteFunctionsAndCrossProjectReads() {
         assertThat(cypher.query(query("UNWIND range(1, 2) AS value RETURN value AS value"))).hasSize(2);
         CypherQueryVO wrongType = query("RETURN 1 AS value");

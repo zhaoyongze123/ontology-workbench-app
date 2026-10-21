@@ -1,0 +1,26 @@
+.pagination {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  min-height: 48px;
+  width: 100%;
+  padding: 8px 0;
+  border-top: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+}
+
+.total {
+  margin-right: auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .pagination {
+    gap: 8px;
+  }
+
+  .total {
+    display: none;
+  }
+}

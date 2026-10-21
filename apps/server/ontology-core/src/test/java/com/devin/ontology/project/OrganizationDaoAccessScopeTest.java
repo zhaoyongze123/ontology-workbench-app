@@ -26,15 +26,18 @@ class OrganizationDaoAccessScopeTest {
         OrganizationQueryVO query = new OrganizationQueryVO();
         query.setPageNum(2);
         query.setPageSize(5);
+        query.setKeyword("needle%");
 
         dao.pageByQuery(query, "user-id", false);
 
         verify(jdbc).queryForObject(
                 argThat(sql -> sql.contains("EXISTS (SELECT 1 FROM ontology.og_project_member")
-                        && sql.contains("m.user_id = ?")),
+                        && sql.contains("m.user_id = ?")
+                        && sql.contains("p.name ILIKE ? ESCAPE")),
                 eq(Long.class), any(Object[].class));
         verify(jdbc).query(
                 argThat(sql -> sql.contains("EXISTS (SELECT 1 FROM ontology.og_project_member")
+                        && sql.contains("p.name ILIKE ? ESCAPE")
                         && sql.contains("LIMIT ? OFFSET ?")),
                 any(RowMapper.class), any(Object[].class));
     }

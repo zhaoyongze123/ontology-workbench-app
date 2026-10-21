@@ -79,4 +79,8 @@ jobs:
         run: node scripts/frontend_contract_smoke.cjs
         env:
           PLAYWRIGHT_MODULE: ${{ runner.temp }}/ontology-web-smoke/node_modules/playwright
+      - name: Run human-centered admin interaction smoke against mocked API
+        run: node scripts/admin_interaction_smoke.cjs
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/ontology-web-smoke/node_modules/playwright
 

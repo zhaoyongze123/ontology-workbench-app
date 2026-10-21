@@ -44,6 +44,7 @@ public class OntologyRelationshipDao extends ServiceImpl<OntologyRelationshipMap
                 .eq(OntologyRelationship::getGraphId, queryVO.getGraphId())
                 .in(!CollectionUtils.isEmpty(queryVO.getRelationshipIdList()), OntologyRelationship::getId, queryVO.getRelationshipIdList())
                 .orderByDesc(OntologyRelationship::getUpdateTime)
+                .orderByDesc(OntologyRelationship::getId)
                 .page(page);
     }
 
@@ -56,6 +57,8 @@ public class OntologyRelationshipDao extends ServiceImpl<OntologyRelationshipMap
     public List<OntologyRelationship> getByGraphId(final BigInteger graphId) {
         return lambdaQuery()
                 .eq(OntologyRelationship::getGraphId, graphId)
+                .orderByDesc(OntologyRelationship::getUpdateTime)
+                .orderByDesc(OntologyRelationship::getId)
                 .list();
     }
 

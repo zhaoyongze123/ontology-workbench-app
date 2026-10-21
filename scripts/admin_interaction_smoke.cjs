@@ -37,6 +37,15 @@ const users = [
     passwordActivated: false,
     createTime: "2026-10-19T08:00:00",
   },
+  {
+    id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    username: "audit_operator",
+    displayName: "审计操作人",
+    systemAdmin: false,
+    enabled: true,
+    passwordActivated: true,
+    createTime: "2026-10-18T08:00:00",
+  },
 ];
 const clients = [
   {
@@ -76,7 +85,10 @@ const auditEvents = Array.from({ length: 51 }, (_, index) => ({
       : index === 1
       ? "ACCOUNT_DISABLED"
       : "PROJECT_CREATED",
-  actorUserId: index === 0 ? null : "actor-12345678",
+  actorUserId: index === 0 ? null : "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  actorDisplayName: index === 0 ? null : "审计操作人",
+  actorUsername: index === 0 ? null : "audit_operator",
+  objectDisplayName: index === 1 ? "目标用户" : index > 1 ? "示例项目" : null,
   details:
     index === 0
       ? {
@@ -89,13 +101,14 @@ const auditEvents = Array.from({ length: 51 }, (_, index) => ({
       : index === 1
       ? { targetUserId: "target-user-123" }
       : { projectId: String(9000 + index), capability: "CREATE_PROJECT" },
-  createdAt: "2026-10-21T02:00:00Z",
+  createdAt: new Date(Date.now() - 60 * 1000).toISOString(),
 }));
 
 const calls = {
   userDisable: [],
   clientDisable: [],
   audit: [],
+  projectInvites: [],
   createdUser: 0,
   createdClient: 0,
 };
@@ -103,6 +116,9 @@ let failDisableOnce = true;
 let failUserCreateOnce = true;
 let failClientDisableOnce = true;
 let failClientCreateOnce = true;
+let failProjectInviteOnce = true;
+let projectInvitePersisted = false;
+let noInviteCandidates = false;
 let incompleteNextClientList = false;
 let currentUserIsAdmin = true;
 let server;
@@ -112,8 +128,21 @@ function response(route, status, body, contentType = "application/json") {
   return route.fulfill({ status, contentType, body: JSON.stringify(body) });
 }
 
-function userPage() {
-  return { items: users.slice(), page: 0, size: 20, total: users.length };
+function userPage(keyword = "") {
+  const normalized = keyword.trim().toLowerCase();
+  const matching = normalized
+    ? users.filter((user) =>
+        `${user.username} ${user.displayName}`
+          .toLowerCase()
+          .includes(normalized)
+      )
+    : users;
+  return {
+    items: matching.slice(0, 20),
+    page: 0,
+    size: 20,
+    total: matching.length,
+  };
 }
 
 async function assertModalFitsViewport(page, label) {
@@ -201,7 +230,11 @@ server = http.createServer((req, res) => {
           authVersion: 1,
         });
       if (endpoint.endsWith("/admin/users") && request.method() === "GET")
-        return response(route, 200, userPage());
+        return response(
+          route,
+          200,
+          userPage(url.searchParams.get("keyword") || "")
+        );
       if (endpoint.endsWith("/admin/users") && request.method() === "POST") {
         calls.createdUser += 1;
         if (failUserCreateOnce) {
@@ -310,20 +343,187 @@ server = http.createServer((req, res) => {
         return response(route, 200, { status: "disabled" });
       }
       if (
+        endpoint.endsWith("/organization/page") &&
+        request.method() === "GET"
+      ) {
+        return response(route, 200, {
+          success: true,
+          data: [
+            {
+              id: "p-1",
+              name: "示例项目",
+              description: "用于交互 smoke 的项目",
+              createTime: "2026-10-20T10:00:00",
+              updateTime: "2026-10-21T10:00:00",
+              ontologyGraphTotal: 1,
+              entityGraphTotal: 0,
+            },
+          ],
+          addition: { total: 1, pageNum: 1, pageSize: 20 },
+        });
+      }
+      if (
+        endpoint.endsWith("/projects/p-1/access") &&
+        request.method() === "GET"
+      )
+        return response(route, 200, {
+          success: true,
+          data: {
+            role: "OWNER",
+            capabilities: [
+              "EDIT_PROJECT",
+              "DELETE_PROJECT",
+              "MANAGE_MEMBERS",
+              "TRANSFER_OWNERSHIP",
+            ],
+          },
+        });
+      if (
+        endpoint.endsWith("/projects/p-1/members") &&
+        request.method() === "GET"
+      )
+        return response(route, 200, {
+          success: true,
+          data: [
+            {
+              userId: "member-1",
+              username: "member_one",
+              displayName: "已有成员",
+              role: "EDITOR",
+            },
+          ],
+          addition: { total: 1, pageNum: 1, pageSize: 20 },
+        });
+      if (
+        endpoint.endsWith("/projects/p-1/invite-candidates") &&
+        request.method() === "GET"
+      ) {
+        const keyword = (url.searchParams.get("q") || "").toLowerCase();
+        const candidates = (
+          noInviteCandidates
+            ? []
+            : [
+                {
+                  id: "u-invite",
+                  username: "invite_user",
+                  displayName: "可邀请用户",
+                  invitationPending: projectInvitePersisted,
+                },
+                {
+                  id: "u-pending",
+                  username: "pending_user",
+                  displayName: "待处理用户",
+                  invitationPending: true,
+                },
+              ]
+        ).filter(
+          (user) =>
+            !keyword ||
+            `${user.username} ${user.displayName}`
+              .toLowerCase()
+              .includes(keyword)
+        );
+        return response(route, 200, {
+          success: true,
+          data: candidates,
+          addition: { total: candidates.length, pageNum: 1, pageSize: 20 },
+        });
+      }
+      if (
+        endpoint.endsWith("/projects/p-1/invitations") &&
+        request.method() === "POST"
+      ) {
+        calls.projectInvites.push(body);
+        if (failProjectInviteOnce) {
+          failProjectInviteOnce = false;
+          // 模拟服务端已提交但响应在网络中丢失的情况。
+          projectInvitePersisted = true;
+          return route.abort("timedout");
+        }
+        return response(route, 201, {
+          success: true,
+          data: { status: "PENDING" },
+        });
+      }
+      if (
+        endpoint.endsWith("/project-invitations/mine") &&
+        request.method() === "GET"
+      )
+        return response(route, 200, {
+          success: true,
+          data: [
+            {
+              id: "inv-1",
+              projectName: "示例项目",
+              inviterUserId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+              inviterDisplayName: null,
+              inviterUsername: "former_admin",
+              targetUserId: "admin-1",
+              targetDisplayName: "系统管理员",
+              role: "EDITOR",
+              status: "PENDING",
+              createdTime: "2026-10-20T10:00:00Z",
+              expiresTime: "2026-10-27T10:00:00Z",
+            },
+          ],
+          addition: { total: 1, pageNum: 1, pageSize: 20 },
+        });
+      if (
+        endpoint.endsWith("/auth/app-authorizations") &&
+        request.method() === "GET"
+      )
+        return response(route, 200, [
+          {
+            id: "authorization-1",
+            applicationName: "Workbench Ontology",
+            scopes: "profile ontology.read",
+            authorizedAt: "2026-10-20T10:00:00Z",
+            absoluteExpiresAt: "2026-11-20T10:00:00Z",
+            revokedAt: null,
+          },
+        ]);
+      if (
         endpoint.endsWith("/admin/audit-events") &&
         request.method() === "GET"
       ) {
         const beforeId = Number(url.searchParams.get("beforeId"));
+        const eventTypes = (url.searchParams.get("eventTypes") || "")
+          .split(",")
+          .filter(Boolean);
+        const actorUserId = url.searchParams.get("actorUserId") || "";
+        const startTime = url.searchParams.get("startTime") || "";
+        const endTime = url.searchParams.get("endTime") || "";
         calls.audit.push({
           limit: Number(url.searchParams.get("limit")),
           beforeId: Number.isFinite(beforeId) ? beforeId : undefined,
+          eventTypes,
+          actorUserId,
+          startTime,
+          endTime,
         });
+        let filtered = auditEvents.slice();
+        if (beforeId)
+          filtered = filtered.filter((event) => event.id < beforeId);
+        if (eventTypes.length)
+          filtered = filtered.filter((event) =>
+            eventTypes.includes(event.eventType)
+          );
+        if (actorUserId)
+          filtered = filtered.filter(
+            (event) => event.actorUserId === actorUserId
+          );
+        if (startTime)
+          filtered = filtered.filter(
+            (event) => Date.parse(event.createdAt) >= Date.parse(startTime)
+          );
+        if (endTime)
+          filtered = filtered.filter(
+            (event) => Date.parse(event.createdAt) <= Date.parse(endTime)
+          );
         return response(
           route,
           200,
-          beforeId
-            ? auditEvents.filter((event) => event.id < beforeId).slice(0, 9)
-            : auditEvents.slice()
+          filtered.slice(0, Number(url.searchParams.get("limit")) || 20)
         );
       }
       return response(route, 200, {});
@@ -479,7 +679,7 @@ server = http.createServer((req, res) => {
       "PASS: uncertain create is not replayed, needs review, and one-time link survives clipboard failure/Escape"
     );
 
-    await page.getByRole("link", { name: "OAuth 客户端" }).click();
+    await page.getByRole("menuitem", { name: "OAuth 客户端" }).click();
     await page.getByText("Workbench Ontology").waitFor();
     await page.getByText("基本身份", { exact: true }).first().waitFor();
     const disabledClientRow = page
@@ -647,13 +847,18 @@ server = http.createServer((req, res) => {
       "PASS: disabled client keeps details, full values are accessible, and uncertain writes require a state check before manual retry"
     );
 
-    await page.getByRole("link", { name: "安全审计" }).click();
+    await page.getByRole("menuitem", { name: "安全审计" }).click();
     await page.getByText("请求身份验证失败").waitFor();
     const auditTable = page.locator(".ant-table");
     assert.equal(
       await auditTable.locator("tbody > tr.ant-table-row").count(),
-      50,
-      "audit displays 50 while requesting one lookahead record"
+      20,
+      "audit displays 20 while requesting one lookahead record"
+    );
+    assert.equal(
+      await page.getByRole("button", { name: "查看最新" }).count(),
+      0,
+      "latest shortcut is hidden on the first cursor page"
     );
     const unauthenticatedRow = page
       .getByRole("row")
@@ -677,18 +882,102 @@ server = http.createServer((req, res) => {
     await page.getByRole("button", { name: "更早记录" }).click();
     await page
       .getByRole("row")
-      .filter({ hasText: "用户 ID" })
+      .filter({ hasText: "示例项目" })
       .first()
       .waitFor();
     assert.equal(
-      calls.audit.some((call) => call.limit === 51 && call.beforeId === 51),
+      await page.getByRole("button", { name: "查看最新" }).count(),
+      1,
+      "latest shortcut appears while browsing cursor history"
+    );
+    assert.equal(
+      calls.audit.some((call) => call.limit === 21 && call.beforeId === 81),
       true,
       "older cursor uses the last displayed record"
     );
     await page.getByRole("button", { name: "较新记录" }).click();
     await page.getByText("请求身份验证失败").waitFor();
+    assert.equal(
+      await page.getByRole("button", { name: "查看最新" }).count(),
+      0,
+      "latest shortcut disappears on the latest cursor page"
+    );
+    await page.getByRole("button", { name: "更早记录" }).click();
     await page.getByRole("button", { name: "查看最新" }).click();
     await page.getByText("请求身份验证失败").waitFor();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.locator(".ant-select-selector").nth(0).click();
+    await page.getByText("最近 7 天", { exact: true }).click();
+    assert.match(
+      await page.locator(".ant-select-selector").nth(0).innerText(),
+      /最近\s*7\s*天/,
+      "quick time selector reflects the selected range"
+    );
+    await page.locator(".ant-select-selector").nth(1).click();
+    await page
+      .locator(".ant-select-dropdown .ant-select-item-option-content")
+      .filter({ hasText: /^停用账号$/ })
+      .click();
+    await page.keyboard.press("Escape");
+    const actorFilter = page.getByRole("combobox", {
+      name: "按姓名或用户名筛选操作人",
+    });
+    await actorFilter.click();
+    await actorFilter.fill("audit_operator");
+    await page
+      .locator(".ant-select-dropdown .ant-select-item-option-content")
+      .filter({ hasText: "审计操作人（@audit_operator）" })
+      .click();
+    assert.equal(
+      (await page.locator("#main-content").innerText()).includes(
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+      ),
+      false,
+      "the operator selector never exposes its internal ID to the rendered UI"
+    );
+    const beforeInvalidRange = calls.audit.length;
+    await page.getByLabel("开始时间（北京时间）").fill("2026-10-22T00:00");
+    await page.getByLabel("结束时间（北京时间）").fill("2026-10-21T00:00");
+    await page.getByRole("button", { name: /查\s*询/ }).click();
+    await page
+      .getByRole("alert")
+      .filter({ hasText: "开始时间不能晚于结束时间" })
+      .waitFor();
+    assert.equal(
+      calls.audit.length,
+      beforeInvalidRange,
+      "invalid date range is shown inline and never sent to the server"
+    );
+    await page.getByLabel("开始时间（北京时间）").fill("2026-10-20T00:00");
+    await page.getByLabel("结束时间（北京时间）").fill("2026-10-23T00:00");
+    await page.getByRole("button", { name: /查\s*询/ }).click();
+    await page.getByRole("row").filter({ hasText: "停用账号" }).waitFor();
+    assert.equal(
+      await auditTable.locator("tbody > tr.ant-table-row").count(),
+      1,
+      "server-side audit filtering searches all records before cursor pagination"
+    );
+    const filteredCall = calls.audit.at(-1);
+    assert.deepEqual(filteredCall.eventTypes, ["ACCOUNT_DISABLED"]);
+    assert.equal(
+      filteredCall.actorUserId,
+      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    );
+    assert.equal(
+      (await auditTable.innerText()).includes(
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+      ),
+      false,
+      "the actor UUID is used only in the API filter, not shown in the audit table"
+    );
+    assert.equal(
+      (await auditTable.innerText()).includes("审计操作人（@audit_operator）"),
+      true,
+      "the audit table identifies the operator by name"
+    );
+    assert.match(filteredCall.startTime, /\+08:00$/);
+    assert.match(filteredCall.endTime, /\+08:00$/);
+    await page.getByRole("button", { name: /重\s*置/ }).click();
     await page.goBack();
     await page.getByRole("heading", { name: "OAuth 客户端" }).waitFor();
     await page.goForward();
@@ -697,12 +986,126 @@ server = http.createServer((req, res) => {
       "PASS: audit uses readable summaries, honest actor labels, detail drawers, cursor navigation, and browser history"
     );
 
+    await page.getByRole("menuitem", { name: "站内邀请" }).click();
+    const invitationList = page.getByText("示例项目", { exact: true });
+    await invitationList.waitFor();
+    await page.getByText("@former_admin 邀请你加入", { exact: true }).waitFor();
+    assert.equal(
+      (await page.locator("#main-content").innerText()).includes(
+        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+      ),
+      false,
+      "an unavailable inviter is never represented by a raw user UUID"
+    );
+
+    await page.getByRole("menuitem", { name: "App 授权" }).click();
+    await page.getByText("Workbench Ontology", { exact: true }).waitFor();
+    await page.getByText("基本身份", { exact: true }).waitFor();
+    await page.getByText("图谱读取", { exact: true }).waitFor();
+    assert.equal(
+      (await page.locator("#main-content").innerText()).includes(
+        "ontology.read"
+      ),
+      false,
+      "users see scope meanings instead of protocol scope codes"
+    );
+
+    await page.getByRole("menuitem", { name: "项目管理" }).click();
+    await page.getByRole("heading", { name: "项目管理" }).waitFor();
+    const projectRow = page.getByRole("row").filter({ hasText: "示例项目" });
+    await projectRow.getByRole("button", { name: "成员" }).waitFor();
+    await projectRow.getByRole("button", { name: "成员" }).click();
+    const membersDialog = page
+      .getByRole("dialog")
+      .filter({ hasText: "项目成员" });
+    await membersDialog.getByText("已有成员", { exact: true }).waitFor();
+    const inviteUserSelect = membersDialog.getByRole("combobox", {
+      name: "邀请用户",
+    });
+    assert.equal(
+      await membersDialog.getByRole("combobox", { name: "项目角色" }).count(),
+      0,
+      "role selection is hidden until the user picks an invite target"
+    );
+    await inviteUserSelect.click();
+    await page.waitForTimeout(500);
+    const inviteOptions = page.locator(
+      ".ant-select-dropdown:visible .ant-select-item-option"
+    );
+    await inviteOptions.filter({ hasText: "可邀请用户" }).waitFor();
+    assert.equal(
+      await inviteOptions
+        .filter({ hasText: "待处理用户" })
+        .evaluate((option) =>
+          option.classList.contains("ant-select-item-option-disabled")
+        ),
+      true,
+      "a user with an existing invitation is shown but cannot be invited again"
+    );
+    await inviteUserSelect.fill("no-such-user");
+    await page.getByText("未找到匹配的可邀请用户", { exact: true }).waitFor();
+    await inviteUserSelect.fill("");
+    await inviteOptions.filter({ hasText: "可邀请用户" }).waitFor();
+    await inviteOptions.filter({ hasText: "可邀请用户" }).click();
+    const invitationSection = membersDialog.locator(
+      'section[aria-label="邀请成员"]'
+    );
+    await invitationSection.getByText("邀请对象：").waitFor();
+    assert.match(
+      await invitationSection.innerText(),
+      /邀请对象：\s*可邀请用户/
+    );
+    await invitationSection
+      .getByRole("combobox", { name: "项目角色" })
+      .waitFor();
+    assert.equal(
+      (await membersDialog.innerText()).includes("u-invite"),
+      false,
+      "the invitation form displays a name and keeps the internal user ID out of the UI"
+    );
+    await membersDialog.getByRole("button", { name: "发送邀请" }).click();
+    await membersDialog
+      .getByText("该用户已有待处理邀请，不能重复发送。", { exact: true })
+      .waitFor();
+    assert.equal(
+      await membersDialog.getByRole("button", { name: "发送邀请" }).count(),
+      0,
+      "the invitation submit stays unavailable until a successful state read confirms the result"
+    );
+    assert.equal(calls.projectInvites.length, 1);
+    assert.equal(
+      calls.projectInvites[0].targetUserId,
+      "u-invite",
+      "the selected display name resolves to the internal ID only in the API request"
+    );
+    console.log(
+      "PASS: invitation selection defaults to searchable names, distinguishes no matches, blocks duplicates, and prevents resubmission after an unknown write outcome"
+    );
+
+    await membersDialog.locator(".ant-modal-close").click();
+    await membersDialog.waitFor({ state: "detached" });
+    await page.locator(".ant-message").waitFor({ state: "hidden" });
+    noInviteCandidates = true;
+    await projectRow.getByRole("button", { name: "成员" }).click();
+    await membersDialog.getByText("已有成员", { exact: true }).waitFor();
+    await membersDialog.getByRole("combobox", { name: "邀请用户" }).click();
+    await page
+      .getByText("没有符合邀请条件的用户；请确认账号已启用且尚未加入此项目", {
+        exact: true,
+      })
+      .waitFor();
+    await membersDialog.locator(".ant-modal-close").click();
+    await membersDialog.waitFor({ state: "detached" });
+    noInviteCandidates = false;
+    await page.locator(".ant-message").waitFor({ state: "hidden" });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "打开主导航" }).click();
     const navigationDrawer = page
       .getByRole("dialog")
       .filter({ hasText: "导航" });
-    await navigationDrawer.getByRole("link", { name: "安全审计" }).waitFor();
+    await navigationDrawer
+      .getByRole("menuitem", { name: "安全审计" })
+      .waitFor();
     await page.keyboard.press("Escape");
     await navigationDrawer.waitFor({ state: "hidden" });
     await page.waitForFunction(
@@ -715,6 +1118,12 @@ server = http.createServer((req, res) => {
       "打开主导航",
       "drawer returns focus to its trigger"
     );
+    await page.getByRole("button", { name: "打开主导航" }).click();
+    const auditNavigation = page
+      .getByRole("dialog")
+      .filter({ hasText: "导航" });
+    await auditNavigation.getByRole("menuitem", { name: "安全审计" }).click();
+    await page.getByRole("heading", { name: "安全审计" }).waitFor();
     const viewportWidths = await page.evaluate(() => ({
       viewport: window.innerWidth,
       document: document.documentElement.scrollWidth,
@@ -724,6 +1133,13 @@ server = http.createServer((req, res) => {
       `narrow viewport must not scroll horizontally: ${JSON.stringify(
         viewportWidths
       )}`
+    );
+    const mobileEventFilterWidth = await page
+      .locator('.ant-select[aria-label="事件类型"]')
+      .evaluate((element) => element.getBoundingClientRect().width);
+    assert.ok(
+      mobileEventFilterWidth >= 250,
+      `mobile event filter must remain operable: width=${mobileEventFilterWidth}`
     );
     await page.screenshot({
       path: "/tmp/ontology-admin-390.png",
@@ -743,7 +1159,7 @@ server = http.createServer((req, res) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole("button", { name: "打开主导航" }).click();
     const narrowNav = page.getByRole("dialog").filter({ hasText: "导航" });
-    await narrowNav.getByRole("link", { name: "用户管理" }).click();
+    await narrowNav.getByRole("menuitem", { name: "用户管理" }).click();
     await page.getByRole("heading", { name: "用户管理" }).waitFor();
     await page.getByRole("button", { name: "创建用户" }).click();
     const narrowCreateDialog = page
@@ -771,7 +1187,7 @@ server = http.createServer((req, res) => {
     await page.getByRole("button", { name: "打开主导航" }).click();
     const regularUserNav = page.getByRole("dialog").filter({ hasText: "导航" });
     assert.equal(
-      await regularUserNav.getByRole("link", { name: "用户管理" }).count(),
+      await regularUserNav.getByRole("menuitem", { name: "用户管理" }).count(),
       0,
       "regular users must not see system admin navigation"
     );
@@ -798,7 +1214,7 @@ server = http.createServer((req, res) => {
     await embeddedApp
       .getByRole("dialog")
       .filter({ hasText: "导航" })
-      .getByRole("link", { name: "安全审计" })
+      .getByRole("menuitem", { name: "安全审计" })
       .click();
     await embeddedApp.getByRole("heading", { name: "安全审计" }).waitFor();
     console.log(

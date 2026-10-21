@@ -99,6 +99,14 @@ public class ProjectMembershipController {
         return page(membershipService.searchUsers(query, pageNum, pageSize));
     }
 
+    @GetMapping("/projects/{projectId}/invite-candidates")
+    public ApiResult<List<ProjectUserOption>> inviteCandidates(@PathVariable final BigInteger projectId,
+            @RequestParam(required = false) final String q,
+            @RequestParam(defaultValue = "1") final int pageNum,
+            @RequestParam(defaultValue = "20") final int pageSize) {
+        return page(membershipService.inviteCandidates(projectId, q, pageNum, pageSize));
+    }
+
     private static <T> ApiResult<List<T>> page(final ProjectPage<T> page) {
         Addition addition = new Addition();
         addition.setTotal((int) Math.min(Integer.MAX_VALUE, page.total()));
