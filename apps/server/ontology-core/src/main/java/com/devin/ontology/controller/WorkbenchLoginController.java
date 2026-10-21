@@ -2,6 +2,7 @@ package com.devin.ontology.controller;
 
 import com.devin.ontology.identity.InternalUser;
 import com.devin.ontology.oidc.PendingWorkbenchBinding;
+import com.devin.ontology.oidc.WorkbenchOAuthReturnPath;
 import com.devin.ontology.oidc.WorkbenchOidcConfigurer;
 import com.devin.ontology.security.CurrentIdentity;
 import com.devin.ontology.security.LoginUserPrincipal;
@@ -48,6 +49,7 @@ public class WorkbenchLoginController {
         }
 
         HttpSession session = request.getSession(true);
+        session.removeAttribute(WorkbenchOAuthReturnPath.SESSION_ATTRIBUTE);
         session.setAttribute(PendingWorkbenchBinding.SESSION_ATTRIBUTE,
                 new PendingWorkbenchBinding(user.id(), user.authVersion(), principal.loginAtEpochMillis(),
                         now + BINDING_TTL_MILLIS));

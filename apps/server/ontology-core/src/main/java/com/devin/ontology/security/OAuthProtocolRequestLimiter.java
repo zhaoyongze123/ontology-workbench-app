@@ -41,7 +41,8 @@ public class OAuthProtocolRequestLimiter {
     @Transactional
     public boolean allowRequest(final String credentialType, final String clientId, final String trustedSource) {
         if (!credentialType.equals("OAUTH_AUTHORIZE") && !credentialType.equals("OAUTH_TOKEN")
-                && !credentialType.equals("OAUTH_REVOKE")) {
+                && !credentialType.equals("OAUTH_REVOKE") && !credentialType.equals("ACCOUNT_ACTIVATE")
+                && !credentialType.equals("ACCOUNT_RESET")) {
             throw new IllegalArgumentException("OAuth 限流凭证类型无效");
         }
         cleanupExpiredBucketsOccasionally();

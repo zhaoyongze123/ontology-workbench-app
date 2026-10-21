@@ -37,6 +37,8 @@ class WorkbenchLoginControllerTest {
                 java.util.List.of()));
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/auth/workbench/bind");
         MockHttpSession session = new MockHttpSession();
+        session.setAttribute(WorkbenchOAuthReturnPath.SESSION_ATTRIBUTE,
+                "/api/v1/oidc/app/authorize?client_id=stale&state=opaque");
         request.setSession(session);
 
         ResponseEntity<Map<String, Object>> response = new WorkbenchLoginController(currentIdentity)
@@ -49,6 +51,7 @@ class WorkbenchLoginControllerTest {
         assertEquals(user.id(), pending.userId());
         assertEquals(user.authVersion(), pending.authVersion());
         assertTrue(pending.expiresAtEpochMillis() - System.currentTimeMillis() <= 5L * 60 * 1000);
+        assertEquals(null, session.getAttribute(WorkbenchOAuthReturnPath.SESSION_ATTRIBUTE));
     }
 
     @Test

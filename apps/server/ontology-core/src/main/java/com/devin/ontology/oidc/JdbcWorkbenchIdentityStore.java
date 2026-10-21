@@ -10,7 +10,8 @@ import org.springframework.stereotype.Repository;
 /** Workbench 外部身份映射的 PostgreSQL 实现。 */
 @Repository
 class JdbcWorkbenchIdentityStore implements WorkbenchIdentityStore {
-    private static final String USER_COLUMNS = "u.id, u.username, u.display_name, u.system_admin, u.enabled, u.auth_version";
+    private static final String USER_COLUMNS = "u.id, u.username, u.display_name, u.system_admin, u.enabled, "
+            + "u.password_activated, u.auth_version";
     private final JdbcTemplate jdbc;
 
     JdbcWorkbenchIdentityStore(final JdbcTemplate jdbc) {
@@ -34,17 +35,17 @@ class JdbcWorkbenchIdentityStore implements WorkbenchIdentityStore {
                         + "JOIN ontology.og_user u ON u.id = e.user_id WHERE e.issuer = ? AND e.subject = ?",
                 (rs, rowNum) -> new InternalUser(rs.getString("id"), rs.getString("username"),
                         rs.getString("display_name"), rs.getBoolean("system_admin"), rs.getBoolean("enabled"),
-                        rs.getLong("auth_version")), issuer, subject)
+                        rs.getBoolean("password_activated"), rs.getLong("auth_version")), issuer, subject)
                 .stream().findFirst();
     }
 
     @Override
     public Optional<InternalUser> findUserForUpdate(final String userId) {
-        return jdbc.query("SELECT id, username, display_name, system_admin, enabled, auth_version "
+        return jdbc.query("SELECT id, username, display_name, system_admin, enabled, password_activated, auth_version "
                         + "FROM ontology.og_user WHERE id = ? FOR UPDATE",
                 (rs, rowNum) -> new InternalUser(rs.getString("id"), rs.getString("username"),
                         rs.getString("display_name"), rs.getBoolean("system_admin"), rs.getBoolean("enabled"),
-                        rs.getLong("auth_version")), userId)
+                        rs.getBoolean("password_activated"), rs.getLong("auth_version")), userId)
                 .stream().findFirst();
     }
 

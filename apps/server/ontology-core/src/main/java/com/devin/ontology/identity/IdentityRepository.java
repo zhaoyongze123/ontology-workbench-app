@@ -15,24 +15,26 @@ public class IdentityRepository {
 
     public Optional<InternalUser> findByUsername(final String username) {
         return jdbcTemplate.query(
-                        "SELECT id, username, display_name, system_admin, enabled, auth_version "
+                        "SELECT id, username, display_name, system_admin, enabled, password_activated, auth_version "
                                 + "FROM ontology.og_user WHERE username = ?",
                         (rs, rowNum) -> new InternalUser(
                                 rs.getString("id"), rs.getString("username"),
                                 rs.getString("display_name"), rs.getBoolean("system_admin"),
-                                rs.getBoolean("enabled"), rs.getLong("auth_version")),
+                                rs.getBoolean("enabled"), rs.getBoolean("password_activated"),
+                                rs.getLong("auth_version")),
                         username)
                 .stream().findFirst();
     }
 
     public Optional<InternalUser> findById(final String id) {
         return jdbcTemplate.query(
-                        "SELECT id, username, display_name, system_admin, enabled, auth_version "
+                        "SELECT id, username, display_name, system_admin, enabled, password_activated, auth_version "
                                 + "FROM ontology.og_user WHERE id = ?",
                         (rs, rowNum) -> new InternalUser(
                                 rs.getString("id"), rs.getString("username"),
                                 rs.getString("display_name"), rs.getBoolean("system_admin"),
-                                rs.getBoolean("enabled"), rs.getLong("auth_version")),
+                                rs.getBoolean("enabled"), rs.getBoolean("password_activated"),
+                                rs.getLong("auth_version")),
                         id)
                 .stream().findFirst();
     }

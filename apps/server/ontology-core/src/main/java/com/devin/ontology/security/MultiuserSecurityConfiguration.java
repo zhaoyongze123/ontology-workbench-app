@@ -73,6 +73,7 @@ public class MultiuserSecurityConfiguration {
             final DatabaseAuthenticationProvider databaseAuthenticationProvider,
             final ObjectProvider<WorkbenchOidcConfigurer> workbenchConfigurer,
             final LoginAttemptThrottleService throttleService,
+            final OAuthProtocolRequestLimiter accountActionLimiter,
             final TrustedClientAddressResolver addressResolver,
             final SecurityAuditRecorder auditRecorder,
             @Value("${ontology.security.trusted-origins:}") final String origins) throws Exception {
@@ -80,7 +81,10 @@ public class MultiuserSecurityConfiguration {
         csrfRepository.setHeaderName("X-CSRF-TOKEN");
         Set<String> trustedOrigins = Arrays.stream(origins.split(","))
                 .map(String::trim).filter(value -> !value.isEmpty()).collect(Collectors.toUnmodifiableSet());
-        http.csrf(csrf -> csrf.csrfTokenRepository(csrfRepository))
+        http.csrf(csrf -> csrf.csrfTokenRepository(csrfRepository)
+                        // 匿名密码动作以高熵单次 bearer token 绑定账号，并只从 POST body 接收。
+                        .ignoringRequestMatchers("/auth/account-actions/inspect", "/auth/activate",
+                                "/auth/password-reset"))
                 .cors(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
                         .sessionAuthenticationStrategy(new ChangeSessionIdAuthenticationStrategy()))
@@ -89,7 +93,9 @@ public class MultiuserSecurityConfiguration {
                 .authorizeHttpRequests(auth -> auth
                         // 只允许容器内部错误分派进入统一错误处理；普通请求仍受后续规则保护。
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
-                        .requestMatchers("/auth/login", "/auth/csrf", "/auth/options").permitAll()
+                        .requestMatchers("/auth/login", "/auth/csrf", "/auth/options",
+                                "/auth/account-actions/inspect", "/auth/activate", "/auth/password-reset")
+                        .permitAll()
                         .requestMatchers("/oauth2/authorization/workbench", "/oidc/callback").permitAll()
                         .requestMatchers("/oidc/app/consent").authenticated()
                         .requestMatchers("/auth/me", "/auth/logout", "/auth/logout-all",
@@ -147,6 +153,8 @@ public class MultiuserSecurityConfiguration {
                         org.springframework.security.web.context.SecurityContextHolderFilter.class)
                 .addFilterBefore(new TrustedOriginFilter(trustedOrigins), CsrfFilter.class)
                 .addFilterBefore(new LoginRateLimitFilter(throttleService, objectMapper, addressResolver),
+                        UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new AccountActionRateLimitFilter(accountActionLimiter, addressResolver, objectMapper),
                         UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(new SessionValidityFilter(identities),
                         org.springframework.security.web.context.SecurityContextHolderFilter.class)

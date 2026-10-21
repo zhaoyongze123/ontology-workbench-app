@@ -42,7 +42,7 @@ public class WorkbenchOidcConfigurer {
 
     /** 调用方需将 AUTHORIZATION_ENTRY 与 CALLBACK_PATH 加入 permitAll 白名单。 */
     public void configure(final HttpSecurity http) throws Exception {
-        OAuth2AuthorizationRequestResolver resolver = pkceResolver(registrations);
+        OAuth2AuthorizationRequestResolver resolver = WorkbenchOAuthReturnPath.wrap(pkceResolver(registrations));
         http.oauth2Login(oauth -> oauth
                 // 该过滤器在 configurer.configure 阶段才创建，必须在对象后处理阶段设置其专属会话策略。
                 .withObjectPostProcessor(new ObjectPostProcessor<OAuth2LoginAuthenticationFilter>() {
