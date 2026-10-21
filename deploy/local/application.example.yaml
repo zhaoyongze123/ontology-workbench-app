@@ -17,6 +17,8 @@ graph:
       preloaded: true
 ontology:
   security:
+    # 必须是 Ontology 公开 HTTPS origin，与 App 打包输入 serviceOrigin 保持一致。
+    public-origin: ${ONTOLOGY_PUBLIC_ORIGIN}
     cookie-secure: true
     cookie-same-site: None
     trusted-origins: ${ONTOLOGY_PUBLIC_ORIGIN}

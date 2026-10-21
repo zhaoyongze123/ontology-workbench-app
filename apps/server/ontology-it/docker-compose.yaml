@@ -1,8 +1,10 @@
 services:
   postgres:
-    # 复用已安装的 AGE 镜像，但启动独立容器、端口和临时数据盘。
-    image: ontology-postgres-age-local:16
-    pull_policy: never
+    # 固定版本的源码构建镜像；容器仍使用独立临时数据盘。
+    image: ${ONTOLOGY_IT_IMAGE:-ontology-postgres-age-it:16}
+    build:
+      context: .
+      dockerfile: Dockerfile
     command: ["postgres", "-c", "shared_preload_libraries=age"]
     environment:
       POSTGRES_DB: ontology_multiuser_dev_20261020
@@ -32,4 +34,5 @@ services:
       - ../ontology-core/src/main/resources/flyway/V0.0.7__audit_protection.sql:/docker-entrypoint-initdb.d/70-V0.0.7__audit_protection.sql:ro
       - ../ontology-core/src/main/resources/flyway/V0.0.8__oauth_protocol_rate_limits.sql:/docker-entrypoint-initdb.d/80-V0.0.8__oauth_protocol_rate_limits.sql:ro
       - ../ontology-core/src/main/resources/flyway/V0.0.9__controlled_audit_retention.sql:/docker-entrypoint-initdb.d/90-V0.0.9__controlled_audit_retention.sql:ro
+      - ../ontology-core/src/main/resources/flyway/V0.0.10__account_password_activation.sql:/docker-entrypoint-initdb.d/95-V0.0.10__account_password_activation.sql:ro
       - ./init/99-grant-runtime.sql:/docker-entrypoint-initdb.d/99-grant-runtime.sql:ro

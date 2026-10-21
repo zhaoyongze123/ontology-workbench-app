@@ -5,9 +5,9 @@ import yaml
 
 VERSION=Path(__file__).resolve().parents[1]
 APP_CALLBACK='https://app.workbench.aos.work/basilcraw/api/apps/oauth2/callback'
-BROWSER_LOGIN_PATH='/oidc/login'
-EMBED_PATH='/oidc/embed'
 BUSINESS_PAGE_PATH='/ontology-management/'
+BROWSER_LOGIN_PATH=BUSINESS_PAGE_PATH+'login'
+EMBED_PATH=BUSINESS_PAGE_PATH
 BROKER_ENDPOINTS={
     'authorizationEndpoint':'/oidc/app/authorize',
     'tokenEndpoint':'/oidc/app/token',
@@ -45,11 +45,11 @@ def check_manifest_contract(manifest,origin):
     plugin=manifest.get('plugin',{})
     app=manifest.get('app',{})
     if plugin.get('key')!='com.basil.ontology' or app.get('key')!='ontology' or app.get('authProviderKey')!='ontology':
-        raise ValueError('Manifest Ontology plugin/app/authProvider key 不符合 0.1.1 合同')
+        raise ValueError('Manifest Ontology plugin/app/authProvider key 不符合正式 App 合同')
     if plugin.get('hasIframe') is not True or plugin.get('iframeUrl')!=embed_url:
-        raise ValueError('plugin 必须声明 hasIframe=true 且 iframeUrl 指向 /oidc/embed')
+        raise ValueError('plugin 必须声明 hasIframe=true 且 iframeUrl 指向 /ontology-management/')
     if app.get('websiteUrl')!=embed_url or app.get('entryPath')!='/ontology':
-        raise ValueError('app.websiteUrl 必须指向 /oidc/embed，entryPath 必须为 /ontology')
+        raise ValueError('app.websiteUrl 必须指向 /ontology-management/，entryPath 必须为 /ontology')
     oauth=manifest.get('auth',{}).get('oauth2',{})
     expected={
         'authorizeUrl':origin+BROKER_ENDPOINTS['authorizationEndpoint'],
@@ -57,11 +57,20 @@ def check_manifest_contract(manifest,origin):
         'userInfoUrl':origin+BROKER_ENDPOINTS['userInfoEndpoint'],
         'redirectUri':APP_CALLBACK,
     }
+    expected.update({'refreshUrl':expected['tokenUrl']})
     for key,value in expected.items():
         if oauth.get(key)!=value:raise ValueError('Manifest OAuth 字段不符合 broker 合同：'+key)
-    if oauth.get('scopes')!=['profile']:raise ValueError('Manifest scopes 必须只请求 broker 支持的 profile')
-    if 'refreshUrl' in oauth or 'refreshToken' in oauth.get('tokenFields',{}):
-        raise ValueError('App broker 不提供 Refresh Token，Manifest 不得声明刷新能力')
+    supported_scopes=['profile','ontology.read','ontology.write','ontology.manage']
+    if oauth.get('scopes')!=supported_scopes:
+        raise ValueError('Manifest scopes 必须与 Java App broker 支持的范围及顺序一致')
+    if oauth.get('tokenFields',{}).get('refreshToken')!='refresh_token':
+        raise ValueError('Manifest 必须映射 Java broker 的 refresh_token 字段')
+    if oauth.get('options',{}).get('tokenRequestType')!='form' or oauth.get('options',{}).get('pkce') is not True:
+        raise ValueError('Manifest 必须使用 form token request 与 PKCE')
+    if oauth.get('tokenPlacement')!={'type':'bearer'}:
+        raise ValueError('Manifest 必须通过 Bearer 传递 App access token')
+    if oauth.get('resultBaseUrl')!='https://app.workbench.aos.work':
+        raise ValueError('Manifest resultBaseUrl 必须保留正式 Workbench origin')
     if oauth.get('account')!={'action':'getCurrentUser','idField':'id','nameField':'username'}:
         raise ValueError('Manifest auth.account 必须映射 getCurrentUser 的 id 和 username')
     if oauth.get('options',{}).get('clientAuthMethod')!='body':
@@ -122,7 +131,7 @@ def check_staged_package(staging,client_id,secret):
         'app_oauth_broker_endpoints_and_fixed_callback',
         'account_mapping_and_get_current_user_action',
         'client_auth_method_body_and_oauth_display_name',
-        'no_refresh_token_capability_declared',
+        'refresh_rotation_capability_declared',
         'business_ids_preserved_as_decimal_strings',
         'client_secret_confined_to_root_oauth_clients',
         'oauth_client_display_name_and_identity',
@@ -164,9 +173,9 @@ def assemble(config_path,output):
     yaml.safe_load(manifest)
 
     output.mkdir(parents=True,exist_ok=True)
-    archive=output/'ontology-0.1.1-admin-upload.zip'
-    report_path=output/'ontology-0.1.1-upload-validation.json'
-    checksum_path=output/'ontology-0.1.1-admin-upload.zip.sha256'
+    archive=output/'ontology-0.2.0-rc.1-admin-upload.zip'
+    report_path=output/'ontology-0.2.0-rc.1-upload-validation.json'
+    checksum_path=output/'ontology-0.2.0-rc.1-admin-upload.zip.sha256'
     with tempfile.TemporaryDirectory(prefix='ontology-app-') as temporary:
         staging=Path(temporary)/'ontology'
         shutil.copytree(VERSION/'source',staging,ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
@@ -184,23 +193,24 @@ def assemble(config_path,output):
         service_path.write_text(json.dumps(service,ensure_ascii=False,indent=2)+'\n')
         # 上传包只含 Workbench App broker 客户端；上游 OIDC 客户端留在网关服务端。
         (staging/'README.md').write_text(
-            '# Ontology App 0.1.1 上传联调包\n\n'
-            '本包使用 Workbench App OAuth broker 客户端。客户端凭证位于根级 `oauth-clients.yaml`，仅供受保护的 App 控制面读取；成员只接收 Workbench 注入的 Bearer。上游 OIDC 客户端凭证由 broker 服务端单独管理，不包含在本包。\n\n'
-            '浏览器登录已由用户确认成功；该确认不代表 App 资源授权已完成。参考 Calendar 正式导出的外部 iframe 应用声明，`plugin.iframeUrl` 与 `app.websiteUrl` 使用 broker 的 `/oidc/embed` 嵌入会话页，`app.entryPath` 保持相对宿主路径 `/ontology`；`open` Action 仍进入 `/oidc/login`。上传后仍需验证宿主对这些入口声明的接受情况、原生 App OAuth 授权、userinfo 身份映射和业务 API Bearer 注入。\n\n'
-            '当前业务 API 继续使用 `/api/v1`。共享业务数据库尚未实现用户级项目 / 图谱隔离；身份认证不等于租户权限隔离。包内 `upload-validation.json` 记录离线结构与凭证边界检查，不代表线上授权已验证。\n'
+            '# Ontology App 0.2.0-rc.1 管理员上传联调包\n\n'
+            '本私有管理员包的根级 `oauth-clients.yaml` 保存 Workbench App OAuth 的 `clientId` 与 `clientSecret`，只允许受保护的 Workbench 管理控制面读取。成员端只接收宿主注入的 Bearer。Java 服务上游 Workbench OIDC 凭证 (`ontology.workbench.*`) 属于服务端机密配置，与本 App client 凭证用途不同，绝不能写入本包。此 ZIP 含 App client secret，禁止提交代码库、公开分发或放入普通成员资源；仅通过已批准的受限管理员通道暂存、上传与清理。\n\n'
+            'Manifest 按官方 App schema 声明外部 iframe、相对 `app.entryPath`、form token request、body client authentication、PKCE、access/refresh token 字段、userinfo 映射，以及 Java broker 支持的 `profile`、`ontology.read`、`ontology.write`、`ontology.manage` scope。`open` 进入 `/ontology-management/login`；iframe 使用 `/ontology-management/`。\n\n'
+            '上传后须由用户执行文档中的 Workbench 授权和 API 验收。包内 `upload-validation.json` 只记录离线结构及凭证边界检查，不表示平台已接受、授权或线上 API 已验证。API 层会将 OAuth scope 与项目成员权限交叉检查；数据库隔离、迁移、回滚和完整 Workbench 生命周期仍以各验收工单及手动证据为准。\n'
         )
         validation_checks=check_staged_package(staging,client_id,secret)
         internal_report={
             'schemaVersion':1,
-            'package':'ontology-0.1.1-admin-upload.zip',
-            'status':'ready_for_workbench_upload_authentication_test',
+            'package':'ontology-0.2.0-rc.1-admin-upload.zip',
+            'status':'ready_for_manual_workbench_validation',
             'checks':{name:'passed' for name in validation_checks},
-            'browserLoginConfirmedByUser':True,
+            'browserLoginConfirmedByUser':False,
             'appResourceAuthorizationVerified':False,
             'limitations':[
-                'Workbench App OAuth credential injection and member identity action still require host upload verification.',
-            'Workbench acceptance of the external iframe URL and relative app.entryPath remains to be verified.',
-                'The shared business database does not provide per-user project or graph isolation.',
+                'Workbench App client credentials must be provisioned from the Java admin console before packaging.',
+                'Workbench upload, browser login, App OAuth authorization, refresh, identity mapping, and API Bearer injection remain unverified.',
+                'This private admin archive contains oauth-clients.yaml; store and upload it only through the approved restricted admin channel.',
+                'Project API ACL and database/AGE isolation require their separate release acceptance evidence.',
             ],
         }
         (staging/'upload-validation.json').write_text(json.dumps(internal_report,ensure_ascii=False,indent=2)+'\n')
@@ -214,8 +224,8 @@ def assemble(config_path,output):
     checksum_path.write_text(digest+'  '+archive.name+'\n');checksum_path.chmod(0o600)
     # 工具只输出归档状态与哈希，不回显任何客户端凭证。
     return {'archive':str(archive),'validationReport':str(report_path),'sha256':digest,
-            'version':'0.1.1','status':'ready_for_workbench_upload_authentication_test',
-            'browserLoginConfirmedByUser':True,'appResourceAuthorizationVerified':False}
+            'version':'0.2.0-rc.1','status':'ready_for_manual_workbench_validation',
+            'browserLoginConfirmedByUser':False,'appResourceAuthorizationVerified':False}
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)

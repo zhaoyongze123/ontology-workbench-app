@@ -4,7 +4,9 @@
 
 本稿汇总已确认的 15 项功能规则与 T01—T29 技术决策。它是后续实现、测试和验收的依据，不表示这些功能已经落地。原始确认依据见[功能记录](方案讨论记录.md)与[技术记录](技术方案讨论记录.md)。
 
-## 1. 当前状态与本轮产物
+## 1. 设计启动时的核对快照（历史）
+
+以下内容记录设计启动时的环境与缺口，不代表当前分支的实现状态。现有代码入口、自动化命令与需要真实环境验证的边界见[发布与验收说明](../engineering/workbench-app-0.2.0-rc.1-release-and-manual-validation.md)；实际验收结果以对应 Issue 和 CI 为准。
 
 - 用户已反馈现有 OIDC 登录能返回项目页，Workbench App 能打开 Ontology。这证明旧接入流程可用，不证明多用户隔离或新版 Agent 授权已完成。
 - 旧链路由 Nginx、Python 接入服务、Java 业务服务及 PostgreSQL/AGE 构成。新设计把身份、会话、授权与项目权限统一迁入 Java。
@@ -182,7 +184,7 @@ App 管理员私密配置与公开 Manifest/成员资源分开；必须实际核
 
 测试项目使用固定规范键 `ontology_test_collaboration`、`ontology_test_isolation`，单独创建测试数据。项目角色以成员关系表达，不给测试用户赋全局同名角色。
 
-私有输入位于 `04-测试与交付/本地运行/private/multiuser-bootstrap.local.json`，文件权限 0600，目录权限 0700；`executionStatus=not_applied`、`applyAutomatically=false`。这是待实现工具的输入约定，尚无现成命令可执行。已有用户名/身份冲突须先核验；重复初始化不自动重置密码、重复建项目或转移已有所有者。初始化结果应输出内部用户编号、成员与归属校验结果，不输出密码。
+受控初始化命令已由 `apps/server/ontology-core/src/main/java/com/devin/ontology/identity/BootstrapCommand.java` 与 `BootstrapService.java` 实现。它只在 `bootstrap` profile、`ontology.bootstrap.apply=true` 且 `spring.main.web-application-type=none` 同时满足时运行，并要求显式给出仓库外私有 JSON 文件路径；输入目录/文件权限必须为 0700/0600。输入契约及重复执行核验见 `BootstrapService.BootstrapInput` 和 `BootstrapServiceTest`。本机测试输入采用 `executionStatus=not_applied`、`applyAutomatically=false`，初始化七个测试用户及两个测试项目；本地测试密码与用户名一致仅适用于隔离开发库。执行前仍须先完成备份恢复和存量归属核对，冲突会失败并要求人工复核；重复运行只核验现状，不会重置已有密码或覆盖已有 OWNER。命令源码已存在不表示已经运行，当前没有声称真实数据库已初始化。
 
 ## 12. 实施阶段与迁移
 

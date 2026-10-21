@@ -1,15 +1,36 @@
-# Workbench App 接入
+# Workbench Ontology App 0.2.0-rc.1
 
-此目录保存既有 `0.1.1` App 的去凭据模板、工具脚本和打包契约测试，便于继续开发和比对正式导出格式。
+`source/` 是 Workbench App 的版本化 schema 和 Agent 行为事实源。`tools/finalize.py` 从单一 `serviceOrigin` 生成入口、iframe、API 与 Java App OAuth broker URL，再按正式 App 导出结构校验并打包。先复制 [config.example.json](config.example.json) 到仓库外受限目录；示例 origin 只作占位。管理员须先在 Java Admin 创建正式 App client，再将返回的 `clientId`、`clientSecret` 写入私有配置。该示例故意留空凭据；未配置或仍为占位符时不会生成 ZIP，测试夹具凭据不能用于真实环境。
 
-## 单域名打包配置
+当前 Manifest 与 Java broker 的 OAuth 契约一致：固定 `/oidc/app/authorize`、`/oidc/app/token`、`/oidc/app/userinfo`，form token request、PKCE、body client authentication，以及 `profile`、`ontology.read`、`ontology.write`、`ontology.manage` scope。token endpoint 同时承担 refresh，声明 `refresh_token` 字段。Java Admin 必须将客户端登记为 `Ontology`，redirect URI 与 Workbench App callback 完全一致，并配置上述 scope。
 
-打包配置只需维护一个应用域名 `serviceOrigin`。`pageUrl`、`embedUrl`、`authorizationEndpoint`、`tokenEndpoint` 和 `userInfoEndpoint` 可省略，工具会按固定路由从该域名派生。旧配置仍可使用这些字段，但每个显式值必须与 `serviceOrigin` 和固定路由完全一致；上游身份提供方 URL 或不一致的覆盖值会被拒绝。
+凭据有两类，不能混用：管理员上传包根级 `oauth-clients.yaml` 中的 Workbench **App client** 凭据由 Java `/admin/oauth/clients` 登记结果产生；服务端 `ontology.workbench.client-id/client-secret` 是登录 Ontology 时使用的上游 **Workbench OIDC** 凭据，仅保存在后端私密配置。管理员 ZIP 含 App client secret，必须按受限管理员资料管理、传输、上传和清理；它不是公开发布包或成员资源。私有配置、ZIP、校验报告和哈希都不得提交 Git。自动化测试中的 fixture 凭据只是假值。
 
-仍需显式提供 `redirectUri`、`appEntryPath`、`clientId`、`clientSecret` 和 `clientAuthMethod`。`redirectUri` 必须是 Workbench 固定的 App OAuth callback；它不是网页登录回调。`appEntryPath` 固定为 `/ontology`，客户端认证方式固定为 `body`。不要把任何真实凭据写入模板或示例文件。
+示例私有配置结构：
 
-此 `0.1.1` 模板对应历史 Python broker 链路。当前新 Java 多用户版本的下游 OAuth2 授权、scope 和刷新轮换尚未实现；因此用本模板成功生成的包不能据此宣布新 Java App 包可上传或已适配。新版本仍须等 Java 授权契约完成并通过 Workbench 实际联调。
+```json
+{
+  "serviceOrigin": "https://ontology.example.invalid",
+  "redirectUri": "https://app.workbench.aos.work/basilcraw/api/apps/oauth2/callback",
+  "appEntryPath": "/ontology",
+  "clientId": "由 Java App Admin 登记取得",
+  "clientSecret": "由 Java App Admin 登记取得",
+  "clientAuthMethod": "body"
+}
+```
 
-`source/oauth-clients.yaml` 中的 Secret 必须保持为空或占位符，发布时只从服务端受保护配置填入管理员私密部分；生成的 ZIP 不进入 Git。
+把实际配置放在仓库外的权限受限目录。确认 Java `ontology.security.public-origin` 与 `serviceOrigin` 相同；域名变动时更新唯一公共 origin，重启服务并重新生成管理员包。WorkBench 固定 App callback 通常不随 Ontology 域名变化。先在 Java 管理页按 scope 注册 App，再将返回的凭据写入本机私有 JSON，然后生成 `0.2.0-rc.1`。发布物只能被描述为“可进行 Workbench 手动验收”，直到用户完成正式宿主授权、refresh、token 撤销、身份、API 与成员隔离联调。
 
-更换域名时涉及的私有配置、Java 重启及 Workbench 后台步骤见[域名更换清单](../../docs/engineering/changing-domain.md)。
+```sh
+python3 integrations/workbench/tools/finalize.py \
+  --config /absolute/private/app-package.local.json \
+  --output /absolute/private/ontology-app-release
+```
+
+离线契约测试：
+
+```sh
+python3 -m unittest discover -s integrations/workbench/tests -v
+```
+
+Java OAuth 的安全集成测试另见 [Workbench App 发布和手动验收](../../docs/engineering/workbench-app-0.2.0-rc.1-release-and-manual-validation.md)。离线包检查不会验证 Workbench 是否接受 Manifest、真正保存 App client secret、向成员隔离凭据或按预期刷新/撤销。数据库迁移、备份恢复与本机切换按 #17 单独验收；不要从此打包操作推导其已通过。
