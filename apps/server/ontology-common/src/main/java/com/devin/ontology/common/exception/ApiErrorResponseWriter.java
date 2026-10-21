@@ -113,6 +113,8 @@ public final class ApiErrorResponseWriter {
 
     private String message(final String key, final String fallback) {
         Locale locale = LocaleContextHolder.getLocale();
+        // 英文浏览器常只发送 "en"；错误文案资源以 en_US 为准，统一落到该安全回退语言。
+        if ("en".equalsIgnoreCase(locale.getLanguage())) locale = Locale.US;
         return messages.getMessage(key, null, fallback, locale);
     }
 

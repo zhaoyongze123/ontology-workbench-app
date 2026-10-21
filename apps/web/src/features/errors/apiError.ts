@@ -52,6 +52,7 @@ const FALLBACK_BY_STATUS: Record<number, string> = {
 
 const LEGACY_ERROR_MESSAGES: Record<string, string> = {
   invalid_credentials: '用户名或密码错误。',
+  token_invalid: '链接已失效或已使用，请联系系统管理员重新生成。',
   too_many_attempts: '尝试次数过多，请稍后重试。',
   too_many_requests: '请求过于频繁，请稍后重试。',
   account_disabled: '账号已停用，请联系系统管理员。',
@@ -146,8 +147,10 @@ export function normalizeApiError(input: unknown): AppError {
   const requestId = typeof data.requestId === 'string' ? data.requestId
     : typeof infoData.requestId === 'string' ? infoData.requestId
     : header(headers, 'X-Request-ID');
+  const legacyErrorCode = typeof legacyError === 'string' && legacyError.toLowerCase() === 'token_invalid'
+    ? 'ACCOUNT_ACTION_INVALID' : undefined;
   const errorCode = typeof data.errorCode === 'string' ? data.errorCode
-    : typeof info.errorCode === 'string' ? info.errorCode : undefined;
+    : typeof info.errorCode === 'string' ? info.errorCode : legacyErrorCode;
   const rawLegacyCode = data.code ?? info.errorCode ?? infoData.code;
   const legacyCode = typeof rawLegacyCode === 'number' ? rawLegacyCode : undefined;
   const legacyData = data.success === false ? data.data : infoData.success === false ? infoData.data : undefined;

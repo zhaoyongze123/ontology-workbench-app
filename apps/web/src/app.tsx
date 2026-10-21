@@ -29,13 +29,14 @@ export async function getInitialState() {
 }
 
 let loginRedirectPending = false;
-history.listen(() => {
+export function onRouteChange({ location }: { location: { pathname: string } }) {
+  if (appRelativePath(location.pathname) === '/login') return;
   // 路由状态是登录跳转的事实源；同一轮并发 401 只触发一次导航。
   loginRedirectPending = false;
-});
+}
 
 /** 业务 API 明确协商 Problem Details；成功响应的 DTO 结构不受影响。 */
-export async function errorContractRequestOptions(url: string, options: any) {
+async function errorContractRequestOptions(url: string, options: any) {
   if (!shouldRequestProblemDetails(url)) return { url, options };
   return {
     url,

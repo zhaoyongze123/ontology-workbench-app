@@ -52,6 +52,15 @@ test('normalizes the legacy ApiResult error and numeric code', () => {
   assert.equal(error.message, '当前状态冲突。');
 });
 
+test('maps the legacy invalid account-action code to its stable reason', () => {
+  const error = normalizeApiError({
+    response: { status: 409, data: { error: 'token_invalid' } },
+  });
+
+  assert.equal(error.errorCode, 'ACCOUNT_ACTION_INVALID');
+  assert.equal(error.message, '链接已失效或已使用，请联系系统管理员重新生成。');
+});
+
 test('keeps legacy validation field messages without rejected values', () => {
   const error = normalizeApiError({
     name: 'BizError',

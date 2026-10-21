@@ -60,7 +60,7 @@ const AccountActionPage: React.FC = () => {
   if (state === 'invalid' || state === 'error' || state === 'done') return <main style={{ maxWidth: 480, margin: '10vh auto', padding: 16 }}>
     <Result status={state === 'done' ? 'success' : state === 'invalid' ? 'warning' : 'error'}
       title={state === 'done' ? '密码已设置' : state === 'invalid' ? '链接无效或已过期' : '暂时无法核验链接'}
-      subTitle={state === 'done' ? '请使用新密码登录。' : state === 'invalid' ? '请联系系统管理员重新生成链接。'
+      subTitle={state === 'done' ? '请使用新密码登录。' : state === 'invalid' ? '链接已失效或已使用，请联系系统管理员重新生成。'
         : inspectionError || '请检查网络后重新打开链接。'}
       extra={state === 'done' ? <Button type="primary" onClick={() => navigate(appRelativePath('/login'), { replace: true })}>前往登录</Button> : undefined} />
   </main>;

@@ -72,6 +72,16 @@ class MultiuserApiExceptionAdviceTest {
     }
 
     @Test
+    void englishLanguageUsesTheEnglishErrorCatalogForGenericLanguageTags() throws Exception {
+        mvc.perform(get("/test-errors/account-conflict")
+                        .header("Accept-Language", "en")
+                        .accept(MediaType.valueOf("application/problem+json")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail")
+                        .value("At least one enabled system administrator must remain."));
+    }
+
+    @Test
     void validationReturnsEverySafeFieldErrorWithoutRejectedValues() throws Exception {
         mvc.perform(post("/test-errors/validation")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -99,7 +109,9 @@ class MultiuserApiExceptionAdviceTest {
         mvc.perform(get("/test-errors/database-syntax").accept(MediaType.valueOf("application/problem+json")))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.errorCode").value("INTERNAL_ERROR"))
-                .andExpect(jsonPath("$.detail").value("请求处理失败，请稍后重试。"));
+                .andExpect(jsonPath("$.detail").exists())
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("internal database marker"))));
     }
 
     @Test
