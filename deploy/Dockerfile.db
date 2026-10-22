@@ -1,0 +1,19 @@
+# 与隔离 IT 环境复用相同锁定版本及插件构建来源；生产数据存于命名卷。
+FROM postgres:16.15-bookworm@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4
+ARG AGE_TAG=PG16/v1.6.0-rc0
+ARG AGE_COMMIT=2db2f06
+ARG PGVECTOR_TAG=v0.8.1
+ARG PGVECTOR_COMMIT=778dacf20c07caf904557a88705142631818d8cb
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake flex bison postgresql-server-dev-16 libpq-dev ca-certificates git \
+    && rm -rf /var/lib/apt/lists/* \
+    && git clone --depth 1 --branch "${AGE_TAG}" https://github.com/apache/age.git /tmp/age \
+    && test "$(git -C /tmp/age rev-parse --short=7 HEAD)" = "${AGE_COMMIT}" \
+    && make -C /tmp/age PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config install \
+    && rm -rf /tmp/age \
+    && git clone --depth 1 --branch "${PGVECTOR_TAG}" https://github.com/pgvector/pgvector.git /tmp/pgvector \
+    && test "$(git -C /tmp/pgvector rev-parse HEAD)" = "${PGVECTOR_COMMIT}" \
+    && make -C /tmp/pgvector PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config \
+    && make -C /tmp/pgvector PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config install \
+    && rm -rf /tmp/pgvector
+COPY deploy/db-init/ /docker-entrypoint-initdb.d/
+CMD ["postgres", "-c", "shared_preload_libraries=age", "-c", "password_encryption=scram-sha-256"]

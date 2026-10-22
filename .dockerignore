@@ -1,0 +1,13 @@
+.git
+.github
+**/target
+**/node_modules
+**/dist
+**/dist-multiuser
+**/.env
+**/.env.*
+!**/.env.example
+**/.private
+**/private
+**/*.log
+**/.DS_Store
