@@ -82,24 +82,41 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
-  deployment-smoke:
+  ci-success:
     if: ${{ inputs.push }}
     needs: validate-input
     runs-on: ubuntu-24.04
+    permissions:
+      actions: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.12'
-      - name: Build and smoke the same commit before publishing
-        run: scripts/deployment_smoke.sh
+      - name: Require successful CI run for this exact main commit
         env:
-          ONTOLOGY_DEPLOY_SMOKE: '1'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=100")
+          latest=$(jq -c --arg sha "$GITHUB_SHA" '
+            [.workflow_runs[]
+              | select(.head_sha == $sha and .event == "push" and .head_branch == "main")]
+            | sort_by(.created_at) | last // empty
+          ' <<< "$runs")
+          if [ -z "$latest" ]; then
+            echo "找不到当前提交 $GITHUB_SHA 在 main 上的 CI push 工作流记录；拒绝发布。" >&2
+            exit 1
+          fi
+          status=$(jq -r '.status' <<< "$latest")
+          conclusion=$(jq -r '.conclusion // "none"' <<< "$latest")
+          run_url=$(jq -r '.html_url' <<< "$latest")
+          if [ "$status" != completed ] || [ "$conclusion" != success ]; then
+            echo "当前提交的最新合法 CI 尚未成功（status=$status, conclusion=$conclusion）：$run_url" >&2
+            exit 1
+          fi
+          printf 'CI run passed for sha=%s run=%s\n' "$GITHUB_SHA" "$run_url"
 
   # 只有用户显式选择 push=true 才获取最小发布权限，并输出每个镜像的 digest。
   publish:
     if: ${{ inputs.push }}
-    needs: [validate-input, deployment-smoke]
+    needs: [validate-input, ci-success]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
