@@ -124,7 +124,8 @@ case "$command" in
     chmod 600 "$PRIVATE"/api-config/* "$PRIVATE"/bootstrap-config/*
     printf '%s\n' '配置目录已初始化；请编辑 deploy/.env 的 PUBLIC_ORIGIN，并妥善保管 deploy/private/。'
     ;;
-  pull) need_config; compose --profile tools pull ;;
+  # 拉取生产服务和数据库迁移工具，不拉取仅供开发者打包 App 的镜像。
+  pull) need_config; compose --profile tools pull db api web migrate ;;
   up)
     need_config
     ensure_oidc_config
