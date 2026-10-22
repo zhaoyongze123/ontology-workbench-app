@@ -4,6 +4,9 @@
 import json
 import os
 import urllib.parse
+import urllib.error
+import urllib.request
+from html.parser import HTMLParser
 
 from smoke_client import Browser
 
@@ -20,6 +23,53 @@ graph_name = "ci_smoke_graph"
 def api_succeeded(response):
     # ApiResult.SUCCESS 在服务端 ResultEnum 中的稳定契约码为 0。
     return response is not None and response.get("code") == 0
+
+
+class StaticAssetReferences(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.references = []
+
+    def handle_starttag(self, tag, attributes):
+        attrs = dict(attributes)
+        if tag == "script" and attrs.get("src"):
+            self.references.append((attrs["src"], "javascript"))
+        elif tag == "link" and attrs.get("href"):
+            rel = attrs.get("rel", "").lower().split()
+            if "stylesheet" in rel:
+                self.references.append((attrs["href"], "css"))
+            elif "modulepreload" in rel:
+                self.references.append((attrs["href"], "javascript"))
+
+
+def fetch_static(url):
+    try:
+        response = urllib.request.urlopen(url, timeout=20)
+    except urllib.error.HTTPError as error:
+        response = error
+    return response.status, response.headers.get_content_type(), response.read(), response.geturl()
+
+
+def verify_static_frontend():
+    asset_references = []
+    for route in ("/ontology-management/login", "/ontology-management/admin/audit-events"):
+        status, content_type, body, final_url = fetch_static(transport_origin + route)
+        assert status == 200 and content_type == "text/html" and body, f"前端路由未返回 HTML: {route} ({status}, {content_type})"
+        parser = StaticAssetReferences()
+        parser.feed(body.decode("utf-8", errors="replace"))
+        for reference, kind in parser.references:
+            parsed = urllib.parse.urlparse(reference)
+            if not parsed.scheme and not parsed.netloc:
+                asset_references.append((urllib.parse.urljoin(final_url, reference), kind))
+
+    assert asset_references, "前端 HTML 未引用本地 JavaScript 或 CSS 资源"
+    url, kind = asset_references[0]
+    status, content_type, body, _ = fetch_static(url)
+    expected = {"javascript": {"application/javascript", "text/javascript"}, "css": {"text/css"}}[kind]
+    assert status == 200 and content_type in expected and body, f"前端静态资源异常: {kind} ({status}, {content_type})"
+
+
+verify_static_frontend()
 
 browser = Browser(transport_origin)
 status, csrf, _ = browser.request("/auth/csrf", origin=trusted_origin)
