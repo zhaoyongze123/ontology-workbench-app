@@ -12,7 +12,9 @@ for key in spring.datasource.url spring.datasource.username spring.datasource.pa
   [ -r "$source_dir/$key" ] || { echo "required runtime config is missing: $key" >&2; exit 1; }
   install -o 10001 -g 10001 -m 0400 "$source_dir/$key" "$runtime_dir/$key"
 done
-for key in ontology.workbench.client-id ontology.workbench.client-secret ontology.workbench.scopes; do
+# Cookie 覆写仅供本机 HTTP smoke；生产省略时沿用 Secure + SameSite=None 默认值。
+for key in ontology.workbench.client-id ontology.workbench.client-secret ontology.workbench.scopes \
+  ontology.security.cookie-secure ontology.security.cookie-same-site; do
   if [ -f "$source_dir/$key" ]; then
     install -o 10001 -g 10001 -m 0400 "$source_dir/$key" "$runtime_dir/$key"
   fi

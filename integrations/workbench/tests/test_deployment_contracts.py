@@ -48,6 +48,8 @@ class DeploymentContracts(unittest.TestCase):
         self.assertIn("graph.database.age.preloaded", script)
         self.assertIn("spring.flyway.enabled", script)
         self.assertIn("ontology.workbench.client-secret", entrypoint)
+        self.assertIn("ontology.security.cookie-secure", entrypoint)
+        self.assertIn("ontology.security.cookie-same-site", entrypoint)
         self.assertNotIn("bootstrap_db_password", entrypoint)
         self.assertIn("shared_preload_libraries=age", db_dockerfile)
         self.assertIn("flyway/flyway:9.22.3", migrate_dockerfile)
@@ -72,7 +74,9 @@ class DeploymentContracts(unittest.TestCase):
         self.assertNotIn("$args", nginx)
         self.assertIn("location = /index.html", nginx)
         self.assertIn("internal;", nginx)
-        self.assertIn("expires -1;", nginx)
+        self.assertIn('add_header Cache-Control "no-cache" always;', nginx)
+        self.assertIn('add_header Content-Security-Policy "frame-ancestors', nginx)
+        self.assertIn("add_header Strict-Transport-Security", nginx)
 
     def test_build_images_use_verified_node_22_and_cached_reactor_build(self):
         web_dockerfile = (ROOT / "deploy/Dockerfile.web").read_text()
