@@ -182,6 +182,7 @@ case "$command" in
     [ -z "$exists" ] || { echo '目标数据库已存在；恢复只允许新建独立目标' >&2; exit 2; }
     compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; createdb -h 127.0.0.1 -U ontology_admin "$1"' sh "$target"
     compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; exec pg_restore --no-owner --no-acl --exit-on-error -h 127.0.0.1 -U ontology_admin -d "$1"' sh "$target" < "$backup"
+    db_admin_psql "$target" "$DEPLOY/local/repair-restored-age-oids.sql"
     db_admin_psql "$target" "$DEPLOY/local/prepare-db-roles.sql"
     db_admin_psql "$target" "$DEPLOY/local/finalize-db-permissions.sql"
     ;;

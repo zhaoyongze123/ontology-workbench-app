@@ -113,7 +113,29 @@ class DeploymentContracts(unittest.TestCase):
         self.assertIn('"$target" "$DEPLOY/local/prepare-db-roles.sql"', script)
         self.assertIn('"$target" "$DEPLOY/local/finalize-db-permissions.sql"', script)
         self.assertIn("pg_restore --no-owner --no-acl --exit-on-error", script)
+        repair = 'db_admin_psql "$target" "$DEPLOY/local/repair-restored-age-oids.sql"'
+        restore_index = script.index("pg_restore --no-owner --no-acl --exit-on-error")
+        repair_index = script.index(repair)
+        prepare_index = script.index('db_admin_psql "$target" "$DEPLOY/local/prepare-db-roles.sql"')
+        finalize_index = script.index('db_admin_psql "$target" "$DEPLOY/local/finalize-db-permissions.sql"')
+        self.assertEqual(script.count(repair), 1)
+        self.assertLess(restore_index, repair_index)
+        self.assertLess(repair_index, prepare_index)
+        self.assertLess(prepare_index, finalize_index)
         self.assertIn("--force-recreate api web", script)
+
+    def test_age_oid_repair_is_transactional_and_checks_catalog_associations(self):
+        repair = (ROOT / "deploy/local/repair-restored-age-oids.sql").read_text()
+        self.assertIn("LOCK TABLE ag_catalog.ag_graph, ag_catalog.ag_label IN ACCESS EXCLUSIVE MODE", repair)
+        self.assertIn("n.nspname IS DISTINCT FROM g.name::text", repair)
+        self.assertIn("n.oid IS DISTINCT FROM g.namespace::oid", repair)
+        self.assertIn("graphid IS DISTINCT FROM g.namespace::oid", repair)
+        self.assertIn("temporary_graphid", repair)
+        self.assertIn("DROP CONSTRAINT fk_graph_oid", repair)
+        self.assertIn("ADD CONSTRAINT fk_graph_oid FOREIGN KEY", repair)
+        self.assertIn("BEGIN;", repair)
+        self.assertIn("COMMIT;", repair)
+        self.assertIn("https://github.com/apache/age/issues/2503", repair)
 
 
 if __name__ == "__main__":
