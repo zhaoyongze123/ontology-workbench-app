@@ -151,3 +151,8 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           printf 'image=%s:%s\nrevision=%s\ndigest=%s\n' "$IMAGE" "$VERSION" "$REVISION" "$DIGEST"
+      - name: Verify the published private image can be pulled by digest
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/ontology-${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: docker pull "$IMAGE@$DIGEST"
