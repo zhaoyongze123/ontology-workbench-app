@@ -145,7 +145,8 @@ public class BootstrapService {
 
     static void validateProduction(final ProductionBootstrapInput input) {
         if (input == null || input.schemaVersion() != 1 || input.username() == null
-                || !input.username().strip().matches("[A-Za-z0-9][A-Za-z0-9._@+-]{1,119}")
+                || !input.username().equals(input.username().strip())
+                || !input.username().matches("[A-Za-z0-9][A-Za-z0-9._@+-]{1,119}")
                 || input.displayName() == null || input.displayName().isBlank()
                 || input.displayName().strip().length() > 200 || input.password() == null) {
             throw new IllegalArgumentException("production bootstrap 输入缺少必填字段或版本无效");

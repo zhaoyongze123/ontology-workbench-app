@@ -4,11 +4,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.devin.ontology.OntologyServerApplication;
+import com.devin.ontology.identity.BootstrapService.BootstrapResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.Set;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +25,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -28,6 +37,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * mvn -f apps/server/ontology-core/pom.xml -Dtest=ProductionBootstrapDatabaseIntegrationTest test。
  */
 @SpringBootTest(classes = OntologyServerApplication.class, webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@ActiveProfiles("multiuser")
 @EnabledIfEnvironmentVariable(named = "ONTOLOGY_PRODUCTION_BOOTSTRAP_IT_JDBC_URL",
         matches = ".*/ontology_[a-zA-Z0-9_]*_it(?:\\?.*)?")
 class ProductionBootstrapDatabaseIntegrationTest {
@@ -37,8 +47,8 @@ class ProductionBootstrapDatabaseIntegrationTest {
     @DynamicPropertySource
     static void properties(final DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", ProductionBootstrapDatabaseIntegrationTest::jdbcUrl);
-        registry.add("spring.datasource.username", () -> required("ONTOLOGY_IT_BOOTSTRAP_USER"));
-        registry.add("spring.datasource.password", () -> required("ONTOLOGY_IT_BOOTSTRAP_PASSWORD"));
+        registry.add("spring.datasource.username", () -> required("ONTOLOGY_DB_USER"));
+        registry.add("spring.datasource.password", () -> required("ONTOLOGY_DB_PASSWORD"));
         registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
         registry.add("spring.flyway.enabled", () -> "false");
         registry.add("graph.database.type", () -> "age");
@@ -65,6 +75,7 @@ class ProductionBootstrapDatabaseIntegrationTest {
 
             TransactionTemplate transaction = new TransactionTemplate(new DataSourceTransactionManager(source));
             BootstrapService service = new BootstrapService(jdbc, transaction, passwordEncoder, objectMapper);
+            verifyConcurrentCallWaitsForBootstrapLock(source, transaction, service, input);
             transaction.execute(status -> {
                 assertThat(service.applyProduction(input).applied()).isTrue();
                 assertThat(service.applyProduction(input).applied()).isFalse();
@@ -91,6 +102,38 @@ class ProductionBootstrapDatabaseIntegrationTest {
         } finally {
             Files.deleteIfExists(input);
             Files.deleteIfExists(directory);
+        }
+    }
+
+    private static void verifyConcurrentCallWaitsForBootstrapLock(
+            final DriverManagerDataSource source,
+            final TransactionTemplate transaction,
+            final BootstrapService service,
+            final Path input) throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Connection lockConnection = source.getConnection()) {
+            lockConnection.setAutoCommit(false);
+            try (PreparedStatement statement = lockConnection.prepareStatement(
+                    "SELECT pg_advisory_xact_lock(7194563108322024)")) {
+                statement.execute();
+            }
+            CountDownLatch started = new CountDownLatch(1);
+            Future<BootstrapResult> blockedCall = executor.submit(() -> {
+                started.countDown();
+                return transaction.execute(status -> {
+                    BootstrapResult result = service.applyProduction(input);
+                    status.setRollbackOnly();
+                    return result;
+                });
+            });
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            Thread.sleep(200);
+            assertThat(blockedCall.isDone()).isFalse();
+            lockConnection.commit();
+            BootstrapResult result = blockedCall.get(10, TimeUnit.SECONDS);
+            assertThat(result.applied()).isTrue();
+        } finally {
+            executor.shutdownNow();
         }
     }
 

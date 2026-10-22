@@ -45,6 +45,12 @@ class BootstrapServiceTest {
         assertThatThrownBy(() -> BootstrapService.validateProduction(
                 new BootstrapService.ProductionBootstrapInput(2, "owner", "Owner", "a-long-random-password")))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> BootstrapService.validateProduction(
+                new BootstrapService.ProductionBootstrapInput(1, " owner", "Owner", "a-long-random-password")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> BootstrapService.validateProduction(
+                new BootstrapService.ProductionBootstrapInput(1, "owner ", "Owner", "a-long-random-password")))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
