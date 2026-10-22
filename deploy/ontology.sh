@@ -10,7 +10,7 @@ compose() {
 
 usage() {
   cat <<'EOF'
-用法: deploy/ontology.sh <init-config|pull|up|migrate|init-admin|status|logs|backup|restore|down|package-app>
+用法: deploy/ontology.sh <init-config|install|up|migrate|init-admin|status|logs|backup|restore|down|package-app>
 EOF
 }
 configured_database() {
@@ -32,10 +32,6 @@ configured_web_ip() {
 }
 need_config() {
   [ -f "$DEPLOY/.env" ] || { echo '请先运行 init-config 并编辑 deploy/.env' >&2; exit 2; }
-  image_tag=$(sed -n 's/^IMAGE_TAG=//p' "$DEPLOY/.env" | tail -n 1)
-  case "$image_tag" in ''|latest|replace-with-a-release-tag|*[!A-Za-z0-9_.-]*)
-    echo '请在 deploy/.env 设置固定版本 IMAGE_TAG，不要使用 latest' >&2; exit 2;;
-  esac
   origin=$(sed -n 's/^PUBLIC_ORIGIN=//p' "$DEPLOY/.env" | tail -n 1)
   case "$origin" in https://*) :;; *) echo 'PUBLIC_ORIGIN 必须是公开 HTTPS origin' >&2; exit 2;; esac
   if [ -f "$PRIVATE/api-config/ontology.security.public-origin" ] \
@@ -70,6 +66,14 @@ ensure_oidc_config() {
     *) echo 'ontology.workbench.enabled 必须为 true 或 false' >&2; exit 2 ;;
   esac
 }
+bootstrap_input() {
+  bootstrap_file=$PRIVATE/bootstrap-input/bootstrap-admin.json
+  [ ! -L "$PRIVATE/bootstrap-input" ] \
+    && [ -f "$bootstrap_file" ] && [ ! -L "$bootstrap_file" ] \
+    || { echo '请将管理员初始化 JSON 放入 deploy/private/bootstrap-input/bootstrap-admin.json' >&2; exit 2; }
+  chmod 700 "$PRIVATE/bootstrap-input"
+  chmod 600 "$bootstrap_file"
+}
 db_admin_psql() {
   database=$1 sql_file=$2
   compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)" ONTOLOGY_DB_USER=ontology_runtime ONTOLOGY_DB_PASSWORD="$(cat /run/secrets/runtime_db_password)" ONTOLOGY_MIGRATOR_PASSWORD="$(cat /run/secrets/migrator_db_password)" ONTOLOGY_BOOTSTRAP_DB_USER=ontology_bootstrap ONTOLOGY_BOOTSTRAP_DB_PASSWORD="$(cat /run/secrets/bootstrap_db_password)"; exec psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U ontology_admin -d "$1"' sh "$database" < "$sql_file"
@@ -88,7 +92,7 @@ case "$command" in
     case "$origin_host" in ''|*/*|*\?*|*#*) echo 'PUBLIC_ORIGIN 不能包含路径、查询或片段' >&2; exit 2;; esac
     for name in db-admin-password runtime-db-password migrator-db-password bootstrap-db-password; do
       if [ ! -s "$PRIVATE/$name" ]; then
-        value=$(docker run --rm busybox:1.36 sh -c 'head -c 32 /dev/urandom | od -An -tx1 | tr -d " \n"')
+        value=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
         umask 077; printf '%s' "$value" > "$PRIVATE/$name"
       fi
       chmod 600 "$PRIVATE/$name"
@@ -124,32 +128,34 @@ case "$command" in
     chmod 600 "$PRIVATE"/api-config/* "$PRIVATE"/bootstrap-config/*
     printf '%s\n' '配置目录已初始化；请编辑 deploy/.env 的 PUBLIC_ORIGIN，并妥善保管 deploy/private/。'
     ;;
-  # 拉取生产服务和数据库迁移工具，不拉取仅供开发者打包 App 的镜像。
-  pull) need_config; compose --profile tools pull db api web migrate ;;
+  install)
+    need_config
+    ensure_oidc_config
+    bootstrap_input
+    compose build db api web
+    compose up -d --wait --wait-timeout 120 db
+    compose run --rm --no-deps migrate
+    compose --profile tools run --rm --no-deps bootstrap
+    compose up -d --no-deps --wait --wait-timeout 600 api web
+    ;;
   up)
     need_config
     ensure_oidc_config
-    compose up -d db
-    # init-config 会重写私有 JDBC 文件；重建 API 才会重新读取并切换目标库。
-    compose up -d --force-recreate api web
+    # API 依赖迁移任务；Compose 会先构建镜像、等待数据库和迁移成功，再启动 API 与 Web。
+    compose up -d --build --wait --wait-timeout 600 db api web
     ;;
   migrate)
     need_config
     compose up -d --wait --wait-timeout 120 db
-    database=$(configured_database)
-    db_admin_psql "$database" "$DEPLOY/local/prepare-db-roles.sql"
-    compose --profile tools run --rm migrate
-    db_admin_psql "$database" "$DEPLOY/local/finalize-db-permissions.sql"
+    compose build api
+    compose run --rm --no-deps migrate
     ;;
   init-admin)
     need_config
-    bootstrap_file=$PRIVATE/bootstrap-input/bootstrap-admin.json
-    [ ! -L "$PRIVATE/bootstrap-input" ] \
-      && [ -f "$bootstrap_file" ] && [ ! -L "$bootstrap_file" ] \
-      || { echo '请将私密 bootstrap JSON 放入 deploy/private/bootstrap-input/bootstrap-admin.json' >&2; exit 2; }
-    chmod 700 "$PRIVATE/bootstrap-input"
-    chmod 600 "$bootstrap_file"
-    compose --profile tools run --rm bootstrap
+    bootstrap_input
+    compose build api
+    compose up -d --wait --wait-timeout 120 db
+    compose --profile tools run --rm --no-deps bootstrap
     ;;
   status) need_config; compose ps ;;
   logs) need_config; compose logs --tail=200 -f "${1:-web}" ;;
@@ -191,7 +197,7 @@ case "$command" in
   package-app)
     need_config
     [ -s "$PRIVATE/package.json" ] || { echo '缺少私密 App 配置 deploy/private/package.json' >&2; exit 2; }
-    compose --profile tools run --rm package
+    compose --profile tools run --build --rm package
     ;;
   *) usage; exit 2 ;;
 esac

@@ -30,23 +30,6 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
 
-  deployment-bundle:
-    needs: validate-input
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Assemble deployment-only bundle
-        run: |
-          mkdir -p "$RUNNER_TEMP/deployment-bundle"
-          tar -czf "$RUNNER_TEMP/deployment-bundle/ontology-deployment-bundle.tar.gz" \
-            deploy/compose.yaml deploy/ontology.sh deploy/.env.example deploy/local docs/deployment.md
-      - uses: actions/upload-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.6
-        with:
-          name: ontology-deployment-bundle-${{ inputs.version }}
-          path: ${{ runner.temp }}/deployment-bundle/ontology-deployment-bundle.tar.gz
-          if-no-files-found: error
-          retention-days: 30
-
   # 手动输入 push=false 时只构建，不创建 Release 或发布标签。
   build:
     if: ${{ !inputs.push }}
@@ -62,10 +45,6 @@ jobs:
             dockerfile: deploy/Dockerfile.web
           - image: db
             dockerfile: deploy/Dockerfile.db
-          - image: migrate
-            dockerfile: deploy/Dockerfile.migrate
-          - image: package
-            dockerfile: deploy/Dockerfile.package
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@v3
@@ -131,10 +110,6 @@ jobs:
             dockerfile: deploy/Dockerfile.web
           - image: db
             dockerfile: deploy/Dockerfile.db
-          - image: migrate
-            dockerfile: deploy/Dockerfile.migrate
-          - image: package
-            dockerfile: deploy/Dockerfile.package
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@v3

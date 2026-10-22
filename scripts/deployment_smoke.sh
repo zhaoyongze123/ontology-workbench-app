@@ -16,11 +16,11 @@ case "$SMOKE_HOME" in
 esac
 [ ! -e "$SMOKE_HOME" ] || { echo "smoke 临时目录已存在，拒绝覆盖：$SMOKE_HOME" >&2; exit 2; }
 mkdir -m 700 "$SMOKE_HOME"
-DEPLOY=$SMOKE_HOME/deploy
-mkdir -m 700 "$DEPLOY"
-# 只复制受版本控制的部署入口；任何现存 .env/private 配置都不会进入或被清理。
-cp "$ROOT/deploy/compose.yaml" "$ROOT/deploy/ontology.sh" "$ROOT/deploy/.env.example" "$DEPLOY/"
-cp -R "$ROOT/deploy/local" "$DEPLOY/local"
+SOURCE=$SMOKE_HOME/source
+mkdir -m 700 "$SOURCE"
+# 隔离的完整源码副本用于验证 Compose 能从仓库根目录完成本地构建。
+git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$SOURCE"
+DEPLOY=$SOURCE/deploy
 COMPOSE_PROJECT_NAME=ontology-deploy-smoke-${RUN_ID}-${RUN_ATTEMPT}
 export COMPOSE_PROJECT_NAME
 compose() {
@@ -44,8 +44,6 @@ env_path = Path(sys.argv[1])
 replacements = {
     "PUBLIC_ORIGIN": "https://127.0.0.1:28083",
     "HTTP_BIND_PORT": "28083",
-    "IMAGE_PREFIX": "ontology-smoke",
-    "IMAGE_TAG": "ci",
     "API_TRUSTED_PROXY_REGEX": r"10\.203\.35\.10",
     "BACKEND_SUBNET": "10.203.35.0/24",
     "WEB_BACKEND_IP": "10.203.35.10",
@@ -75,17 +73,10 @@ cat > "$DEPLOY/private/bootstrap-input/bootstrap-admin.json" <<JSON
 JSON
 chmod 600 "$DEPLOY/private/bootstrap-input/bootstrap-admin.json"
 
-# Compose 不含 build 声明；在原始源码上下文中显式构建五个固定候选镜像。
-if [ "${SKIP_BUILD:-0}" != "1" ]; then
-  for image in api web db migrate package; do
-    docker build -f "$ROOT/deploy/Dockerfile.$image" -t "ontology-smoke/ontology-$image:ci" "$ROOT"
-  done
-fi
-"$deploy_script" migrate
-"$deploy_script" init-admin
+# 首次安装应从完整源码构建三个部署镜像，迁移和管理员初始化由安装命令按序执行。
+"$deploy_script" install
 # 同一私密输入重复执行必须幂等；后续仍用原密码登录确认没有重置。
 "$deploy_script" init-admin
-"$deploy_script" up
 
 wait_for_web() {
   ready=0

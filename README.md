@@ -29,7 +29,7 @@ make verify
 
 `make verify` 检查仓库内容、运行 Java 测试、构建前端及验证 App 模板。需要数据库的集成测试默认跳过，必须显式指向隔离测试库并传入环境凭据；详情见 [验证说明](docs/engineering/validation.md)。
 
-服务运行、首次管理员初始化、反向代理、备份恢复和 App 打包统一使用 [Docker 部署指南](docs/deployment.md)。Compose 镜像构建前端多用户静态产物并启动 Java API；不再支持从仓库模板手动启动 Java/Nginx 服务。
+服务器运行、首次管理员初始化、反向代理及备份恢复见 [Docker 部署指南](docs/deployment.md)；Workbench App 包由项目负责人按[候选版交付指南](docs/engineering/workbench-app-0.2.0-rc.1-release-and-manual-validation.md)单独构建。Compose 从源码构建 PostgreSQL/AGE、Java API 和 Web，API 启动前自动完成 Flyway 迁移；不再支持从仓库模板手动启动 Java/Nginx 服务。
 
 ## 方案与协作
 
