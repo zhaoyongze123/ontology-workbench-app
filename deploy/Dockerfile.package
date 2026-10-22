@@ -3,4 +3,5 @@ RUN pip install --no-cache-dir PyYAML==6.0.2
 WORKDIR /opt/ontology
 COPY integrations/workbench/tools/finalize.py /opt/ontology/integrations/workbench/tools/finalize.py
 COPY integrations/workbench/source/ /opt/ontology/integrations/workbench/source/
-ENTRYPOINT ["python", "/opt/ontology/integrations/workbench/tools/finalize.py"]
+COPY deploy/package-entrypoint.py /opt/ontology/deploy/package-entrypoint.py
+ENTRYPOINT ["python", "/opt/ontology/deploy/package-entrypoint.py"]
