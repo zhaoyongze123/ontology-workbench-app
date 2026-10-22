@@ -27,6 +27,18 @@ need_config() {
     exit 2
   fi
 }
+ensure_oidc_config() {
+  oidc_enabled=$(cat "$PRIVATE/api-config/ontology.workbench.enabled" 2>/dev/null || printf 'false')
+  case "$oidc_enabled" in
+    true)
+      [ -s "$PRIVATE/api-config/ontology.workbench.client-id" ] \
+        && [ -s "$PRIVATE/api-config/ontology.workbench.client-secret" ] \
+        || { echo 'Workbench OIDC 启用前，请在 deploy/private/api-config 中配置 client-id 和 client-secret' >&2; exit 2; }
+      ;;
+    false) : ;;
+    *) echo 'ontology.workbench.enabled 必须为 true 或 false' >&2; exit 2 ;;
+  esac
+}
 db_admin_psql() {
   compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)" ONTOLOGY_DB_USER=ontology_runtime ONTOLOGY_DB_PASSWORD="$(cat /run/secrets/runtime_db_password)" ONTOLOGY_MIGRATOR_PASSWORD="$(cat /run/secrets/migrator_db_password)" ONTOLOGY_BOOTSTRAP_DB_USER=ontology_bootstrap ONTOLOGY_BOOTSTRAP_DB_PASSWORD="$(cat /run/secrets/bootstrap_db_password)"; exec psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U ontology_admin -d ontology' < "$1"
 }
@@ -34,8 +46,8 @@ command=${1:-}
 shift || true
 case "$command" in
   init-config)
-    mkdir -p "$PRIVATE/api-config" "$PRIVATE/bootstrap-config" "$PRIVATE/backups" "$PRIVATE/package-output"
-    chmod 700 "$PRIVATE" "$PRIVATE/api-config" "$PRIVATE/bootstrap-config" "$PRIVATE/backups" "$PRIVATE/package-output"
+    mkdir -p "$PRIVATE/api-config" "$PRIVATE/bootstrap-config" "$PRIVATE/bootstrap-input" "$PRIVATE/backups" "$PRIVATE/package-output"
+    chmod 700 "$PRIVATE" "$PRIVATE/api-config" "$PRIVATE/bootstrap-config" "$PRIVATE/bootstrap-input" "$PRIVATE/backups" "$PRIVATE/package-output"
     [ -f "$DEPLOY/.env" ] || cp "$DEPLOY/.env.example" "$DEPLOY/.env"
     chmod 600 "$DEPLOY/.env"
     origin=$(sed -n 's/^PUBLIC_ORIGIN=//p' "$DEPLOY/.env" | tail -n 1)
@@ -57,24 +69,44 @@ case "$command" in
     printf '%s' "$origin" > "$PRIVATE/api-config/ontology.security.trusted-origins"
     printf '%s' '172.30.0.10/32' > "$PRIVATE/api-config/ontology.security.trusted-proxies"
     printf '%s' 'false' > "$PRIVATE/api-config/spring.flyway.enabled"
+    printf '%s' age > "$PRIVATE/api-config/graph.database.type"
+    printf '%s' true > "$PRIVATE/api-config/graph.database.age.preloaded"
+    oidc_enabled=$(sed -n 's/^WORKBENCH_OIDC_ENABLED=//p' "$DEPLOY/.env" | tail -n 1)
+    oidc_enabled=${oidc_enabled:-false}
+    case "$oidc_enabled" in true|false) :;; *) echo 'WORKBENCH_OIDC_ENABLED 必须为 true 或 false' >&2; exit 2;; esac
+    printf '%s' "$oidc_enabled" > "$PRIVATE/api-config/ontology.workbench.enabled"
+    printf '%s' 'https://app.workbench.aos.work' > "$PRIVATE/api-config/ontology.workbench.issuer"
+    printf '%s' 'https://app.workbench.aos.work/oidc/authorize' > "$PRIVATE/api-config/ontology.workbench.authorization-endpoint"
+    printf '%s' 'https://app.workbench.aos.work/basilcraw/api/oidc/token' > "$PRIVATE/api-config/ontology.workbench.token-endpoint"
+    printf '%s' 'https://app.workbench.aos.work/basilcraw/api/oidc/jwks' > "$PRIVATE/api-config/ontology.workbench.jwks-uri"
+    printf '%s' post > "$PRIVATE/api-config/ontology.workbench.client-auth-method"
+    printf '%s/oidc/callback' "$origin" > "$PRIVATE/api-config/ontology.workbench.redirect-uri"
     printf '%s' 'jdbc:postgresql://db:5432/ontology?currentSchema=ontology' > "$PRIVATE/bootstrap-config/spring.datasource.url"
     printf '%s' ontology_bootstrap > "$PRIVATE/bootstrap-config/spring.datasource.username"
     cp "$PRIVATE/bootstrap-db-password" "$PRIVATE/bootstrap-config/spring.datasource.password"
+    printf '%s' false > "$PRIVATE/bootstrap-config/spring.flyway.enabled"
+    printf '%s' age > "$PRIVATE/bootstrap-config/graph.database.type"
+    printf '%s' true > "$PRIVATE/bootstrap-config/graph.database.age.preloaded"
     chmod 600 "$PRIVATE"/api-config/* "$PRIVATE"/bootstrap-config/*
     printf '%s\n' '配置目录已初始化；请编辑 deploy/.env 的 PUBLIC_ORIGIN，并妥善保管 deploy/private/。'
     ;;
   pull) need_config; compose --profile tools pull ;;
-  up) need_config; compose up -d db api web ;;
+  up) need_config; ensure_oidc_config; compose up -d db api web ;;
   migrate)
     need_config
-    compose up -d db
+    compose up -d --wait --wait-timeout 120 db
     db_admin_psql "$DEPLOY/local/prepare-db-roles.sql"
     compose --profile tools run --rm migrate
     db_admin_psql "$DEPLOY/local/finalize-db-permissions.sql"
     ;;
   init-admin)
     need_config
-    [ -s "$PRIVATE/bootstrap-admin.json" ] || { echo '请先按 bootstrap-admin.json 示例创建私密输入' >&2; exit 2; }
+    bootstrap_file=$PRIVATE/bootstrap-input/bootstrap-admin.json
+    [ ! -L "$PRIVATE/bootstrap-input" ] \
+      && [ -f "$bootstrap_file" ] && [ ! -L "$bootstrap_file" ] \
+      || { echo '请将私密 bootstrap JSON 放入 deploy/private/bootstrap-input/bootstrap-admin.json' >&2; exit 2; }
+    chmod 700 "$PRIVATE/bootstrap-input"
+    chmod 600 "$bootstrap_file"
     compose --profile tools run --rm bootstrap
     ;;
   status) need_config; compose ps ;;
@@ -82,9 +114,17 @@ case "$command" in
   backup)
     need_config
     destination=${1:-$PRIVATE/backups/ontology-$(date -u +%Y%m%dT%H%M%SZ).dump}
+    [ ! -e "$destination" ] || { echo '目标备份文件已存在' >&2; exit 2; }
+    destination_dir=$(dirname "$destination")
+    [ -d "$destination_dir" ] || { echo '备份目标目录不存在' >&2; exit 2; }
+    temporary="$destination.tmp.$$"
+    [ ! -e "$temporary" ] || { echo '备份临时文件已存在' >&2; exit 2; }
     umask 077
-    compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; exec pg_dump -h 127.0.0.1 -Fc -U ontology_admin -d ontology' > "$destination"
-    chmod 600 "$destination"
+    trap 'unlink "$temporary" 2>/dev/null || true' EXIT HUP INT TERM
+    compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; exec pg_dump -h 127.0.0.1 -Fc -U ontology_admin -d ontology' > "$temporary"
+    chmod 600 "$temporary"
+    mv "$temporary" "$destination"
+    trap - EXIT HUP INT TERM
     printf '备份完成: %s\n' "$destination"
     ;;
   restore)

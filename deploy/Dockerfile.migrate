@@ -1,4 +1,4 @@
-FROM flyway/flyway:10.20.1
+FROM flyway/flyway:9.22.3
 COPY apps/server/ontology-core/src/main/resources/flyway/ /flyway/sql/
 COPY deploy/local/prepare-db-roles.sql deploy/local/finalize-db-permissions.sql /ontology/
 ENTRYPOINT ["flyway"]

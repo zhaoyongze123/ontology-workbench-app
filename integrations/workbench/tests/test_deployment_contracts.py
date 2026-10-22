@@ -29,6 +29,33 @@ class DeploymentContracts(unittest.TestCase):
         self.assertNotIn("secrets", api)
         self.assertEqual(api["environment"]["SPRING_FLYWAY_ENABLED"], "false")
         self.assertEqual(COMPOSE["services"]["migrate"]["profiles"], ["tools"])
+        self.assertEqual(api["networks"], ["backend", "egress"])
+        self.assertTrue(COMPOSE["networks"]["backend"]["internal"])
+        migrate = COMPOSE["services"]["migrate"]
+        self.assertEqual(migrate["environment"]["FLYWAY_SCHEMAS"], "ontology")
+        self.assertEqual(migrate["environment"]["FLYWAY_DEFAULT_SCHEMA"], "ontology")
+        self.assertEqual(migrate["environment"]["FLYWAY_BASELINE_ON_MIGRATE"], "false")
+        self.assertEqual(migrate["environment"]["FLYWAY_VALIDATE_ON_MIGRATE"], "true")
+        self.assertEqual(migrate["environment"]["FLYWAY_CLEAN_DISABLED"], "true")
+        self.assertIn("--wait", (ROOT / "deploy/ontology.sh").read_text())
+
+    def test_age_and_workbench_oidc_are_configurable_without_admin_secrets(self):
+        script = (ROOT / "deploy/ontology.sh").read_text()
+        entrypoint = (ROOT / "deploy/api-entrypoint.sh").read_text()
+        db_dockerfile = (ROOT / "deploy/Dockerfile.db").read_text()
+        migrate_dockerfile = (ROOT / "deploy/Dockerfile.migrate").read_text()
+        self.assertIn("graph.database.type", script)
+        self.assertIn("graph.database.age.preloaded", script)
+        self.assertIn("spring.flyway.enabled", script)
+        self.assertIn("ontology.workbench.client-secret", entrypoint)
+        self.assertNotIn("bootstrap_db_password", entrypoint)
+        self.assertIn("shared_preload_libraries=age", db_dockerfile)
+        self.assertIn("flyway/flyway:9.22.3", migrate_dockerfile)
+
+    def test_bootstrap_input_is_mounted_as_private_directory(self):
+        bootstrap = COMPOSE["services"]["bootstrap"]
+        self.assertIn("./private/bootstrap-input:/run/bootstrap-input:ro", bootstrap["volumes"])
+        self.assertTrue(any("/run/bootstrap-input/bootstrap-admin.json" in arg for arg in bootstrap["command"]))
 
     def test_nginx_overwrites_forwarding_headers_and_limits_api_to_internal_network(self):
         nginx = (ROOT / "deploy/nginx.conf").read_text()
@@ -36,6 +63,7 @@ class DeploymentContracts(unittest.TestCase):
         self.assertIn("proxy_pass http://api:13001", nginx)
         self.assertIn("proxy_set_header X-Forwarded-For $remote_addr", nginx)
         self.assertIn("proxy_set_header X-Forwarded-Proto https", nginx)
+        self.assertNotIn("ports", COMPOSE["services"]["api"])
         self.assertTrue(COMPOSE["networks"]["backend"]["internal"])
         self.assertIn("/api/v1/auth/csrf", api_dockerfile)
 
