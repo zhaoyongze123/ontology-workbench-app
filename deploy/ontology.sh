@@ -22,6 +22,14 @@ configured_database() {
   [ "${#database}" -le 63 ] || { echo 'DATABASE_NAME 不能超过 63 个字符' >&2; exit 2; }
   printf '%s' "$database"
 }
+configured_web_ip() {
+  web_ip=$(sed -n 's/^WEB_BACKEND_IP=//p' "$DEPLOY/.env" | tail -n 1)
+  web_ip=${web_ip:-10.203.35.10}
+  if ! printf '%s\n' "$web_ip" | awk -F. 'NF == 4 { for (i=1; i<=4; i++) if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) exit 1; exit 0 } { exit 1 }'; then
+    echo 'WEB_BACKEND_IP 必须是有效 IPv4 地址' >&2; exit 2;
+  fi
+  printf '%s' "$web_ip"
+}
 need_config() {
   [ -f "$DEPLOY/.env" ] || { echo '请先运行 init-config 并编辑 deploy/.env' >&2; exit 2; }
   image_tag=$(sed -n 's/^IMAGE_TAG=//p' "$DEPLOY/.env" | tail -n 1)
@@ -33,6 +41,12 @@ need_config() {
   if [ -f "$PRIVATE/api-config/ontology.security.public-origin" ] \
     && [ "$(cat "$PRIVATE/api-config/ontology.security.public-origin")" != "$origin" ]; then
     echo 'PUBLIC_ORIGIN 已变化；请重新运行 init-config 同步运行配置' >&2
+    exit 2
+  fi
+  web_ip=$(configured_web_ip)
+  if [ -f "$PRIVATE/api-config/ontology.security.trusted-proxies" ] \
+    && [ "$(cat "$PRIVATE/api-config/ontology.security.trusted-proxies")" != "$web_ip/32" ]; then
+    echo 'WEB_BACKEND_IP 已变化；请重新运行 init-config 同步代理信任配置' >&2
     exit 2
   fi
   database=$(configured_database)
@@ -81,12 +95,13 @@ case "$command" in
     done
     umask 077
     database=$(configured_database)
+    web_ip=$(configured_web_ip)
     printf '%s' "jdbc:postgresql://db:5432/$database?currentSchema=ontology" > "$PRIVATE/api-config/spring.datasource.url"
     printf '%s' ontology_runtime > "$PRIVATE/api-config/spring.datasource.username"
     cp "$PRIVATE/runtime-db-password" "$PRIVATE/api-config/spring.datasource.password"
     printf '%s' "$origin" > "$PRIVATE/api-config/ontology.security.public-origin"
     printf '%s' "$origin" > "$PRIVATE/api-config/ontology.security.trusted-origins"
-    printf '%s' '172.30.0.10/32' > "$PRIVATE/api-config/ontology.security.trusted-proxies"
+    printf '%s/32' "$web_ip" > "$PRIVATE/api-config/ontology.security.trusted-proxies"
     printf '%s' 'false' > "$PRIVATE/api-config/spring.flyway.enabled"
     printf '%s' age > "$PRIVATE/api-config/graph.database.type"
     printf '%s' true > "$PRIVATE/api-config/graph.database.age.preloaded"
@@ -166,7 +181,7 @@ case "$command" in
     exists=$(compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; psql -h 127.0.0.1 -At -U ontology_admin -d postgres -c "SELECT 1 FROM pg_database WHERE datname = '\''$1'\''"' sh "$target")
     [ -z "$exists" ] || { echo '目标数据库已存在；恢复只允许新建独立目标' >&2; exit 2; }
     compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; createdb -h 127.0.0.1 -U ontology_admin "$1"' sh "$target"
-    compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; exec pg_restore --exit-on-error -h 127.0.0.1 -U ontology_admin -d "$1"' sh "$target" < "$backup"
+    compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; exec pg_restore --no-owner --no-acl --exit-on-error -h 127.0.0.1 -U ontology_admin -d "$1"' sh "$target" < "$backup"
     db_admin_psql "$target" "$DEPLOY/local/prepare-db-roles.sql"
     db_admin_psql "$target" "$DEPLOY/local/finalize-db-permissions.sql"
     ;;

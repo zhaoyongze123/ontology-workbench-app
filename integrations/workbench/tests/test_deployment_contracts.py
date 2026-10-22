@@ -22,6 +22,7 @@ class DeploymentContracts(unittest.TestCase):
         self.assertNotIn("ports", services["api"])
         self.assertNotIn("ports", services["db"])
         self.assertEqual(services["web"]["ports"], ["127.0.0.1:${HTTP_BIND_PORT:-18083}:8080"])
+        self.assertEqual(services["db"]["healthcheck"]["test"], ["CMD-SHELL", "pg_isready -U ontology_admin -d ${DATABASE_NAME:-ontology}"])
 
     def test_api_receives_only_runtime_config_and_migrations_are_explicit(self):
         api = COMPOSE["services"]["api"]
@@ -78,6 +79,18 @@ class DeploymentContracts(unittest.TestCase):
         self.assertIn('add_header Content-Security-Policy "frame-ancestors', nginx)
         self.assertIn("add_header Strict-Transport-Security", nginx)
 
+    def test_backend_network_and_api_proxy_trust_share_configurable_web_ip(self):
+        env_example = (ROOT / "deploy/.env.example").read_text()
+        script = (ROOT / "deploy/ontology.sh").read_text()
+        backend = COMPOSE["networks"]["backend"]["ipam"]["config"][0]
+        self.assertEqual(backend["subnet"], "${BACKEND_SUBNET:-10.203.35.0/24}")
+        self.assertEqual(COMPOSE["services"]["web"]["networks"]["backend"]["ipv4_address"], "${WEB_BACKEND_IP:-10.203.35.10}")
+        self.assertIn("BACKEND_SUBNET=10.203.35.0/24", env_example)
+        self.assertIn("WEB_BACKEND_IP=10.203.35.10", env_example)
+        self.assertIn("API_TRUSTED_PROXY_REGEX=10\\.203\\.35\\.10", env_example)
+        self.assertIn('printf \'%s/32\' "$web_ip"', script)
+        self.assertIn("WEB_BACKEND_IP 已变化", script)
+
     def test_build_images_use_verified_node_22_and_cached_reactor_build(self):
         web_dockerfile = (ROOT / "deploy/Dockerfile.web").read_text()
         api_dockerfile = (ROOT / "deploy/Dockerfile.api").read_text()
@@ -99,6 +112,7 @@ class DeploymentContracts(unittest.TestCase):
         self.assertIn('"$database" "$DEPLOY/local/prepare-db-roles.sql"', script)
         self.assertIn('"$target" "$DEPLOY/local/prepare-db-roles.sql"', script)
         self.assertIn('"$target" "$DEPLOY/local/finalize-db-permissions.sql"', script)
+        self.assertIn("pg_restore --no-owner --no-acl --exit-on-error", script)
         self.assertIn("--force-recreate api web", script)
 
 

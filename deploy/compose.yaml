@@ -14,7 +14,7 @@ services:
       - ontology_db:/var/lib/postgresql/data
     networks: [backend]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ontology_admin -d ontology"]
+      test: ["CMD-SHELL", "pg_isready -U ontology_admin -d ${DATABASE_NAME:-ontology}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -52,7 +52,7 @@ services:
     networks:
       edge: {}
       backend:
-        ipv4_address: 172.30.0.10
+        ipv4_address: ${WEB_BACKEND_IP:-10.203.35.10}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 30s
@@ -107,8 +107,7 @@ networks:
     internal: true
     ipam:
       config:
-        - subnet: 172.30.0.0/24
-          gateway: 172.30.0.1
+        - subnet: ${BACKEND_SUBNET:-10.203.35.0/24}
 volumes:
   ontology_db: {}
 secrets:
