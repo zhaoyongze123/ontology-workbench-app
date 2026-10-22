@@ -160,7 +160,7 @@ restore_graph_id=$(compose exec -T db sh -ec 'export PGPASSWORD="$(cat /run/secr
 restore_age_count=$(compose exec -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; exec psql -q -v ON_ERROR_STOP=1 -At -U ontology_admin -d "$1" -v graph_name="$2"' sh ontology_smoke_restore "ontology$restore_graph_id" <<'SQL'
 LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
-SELECT total FROM cypher(:'graph_name', 'MATCH (n) RETURN count(n) AS total') AS (total agtype);
+SELECT total FROM cypher(:'graph_name', $$MATCH (n) RETURN count(n) AS total$$) AS (total agtype);
 SQL
 )
 [ "$restore_counts" = '1:1:1:1:1' ] && [ "$restore_age_count" = 1 ] \
