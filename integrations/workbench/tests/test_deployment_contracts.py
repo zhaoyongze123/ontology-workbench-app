@@ -9,13 +9,17 @@ COMPOSE = yaml.safe_load((ROOT / "deploy/compose.yaml").read_text())
 
 
 class DeploymentContracts(unittest.TestCase):
-    def test_production_services_use_published_images_without_build_contexts(self):
+    def test_deployment_images_build_from_source_and_migration_reuses_api_image(self):
         services = COMPOSE["services"]
-        self.assertEqual({"db", "api", "web"}.issubset(services), True)
-        for service in services.values():
-            self.assertIn("image", service)
-            self.assertNotIn("build", service)
-            self.assertIn("${IMAGE_TAG:?", service["image"])
+        self.assertTrue({"db", "api", "web", "migrate"}.issubset(services))
+        for name, dockerfile in (("db", "deploy/Dockerfile.db"), ("api", "deploy/Dockerfile.api"), ("web", "deploy/Dockerfile.web")):
+            self.assertEqual(services[name]["build"]["context"], "..")
+            self.assertEqual(services[name]["build"]["dockerfile"], dockerfile)
+        self.assertEqual(services["migrate"]["image"], services["api"]["image"])
+        self.assertNotIn("build", services["migrate"])
+        self.assertNotIn("profiles", services["migrate"])
+        self.assertEqual(services["api"]["depends_on"]["migrate"]["condition"], "service_completed_successfully")
+        self.assertEqual(services["package"]["profiles"], ["tools"])
 
     def test_only_web_has_loopback_host_port(self):
         services = COMPOSE["services"]
@@ -29,22 +33,25 @@ class DeploymentContracts(unittest.TestCase):
         self.assertEqual(api["volumes"], ["./private/api-config:/run/secrets/app:ro"])
         self.assertNotIn("secrets", api)
         self.assertEqual(api["environment"]["SPRING_FLYWAY_ENABLED"], "false")
-        self.assertEqual(COMPOSE["services"]["migrate"]["profiles"], ["tools"])
         self.assertEqual(api["networks"], ["backend", "egress"])
         self.assertTrue(COMPOSE["networks"]["backend"]["internal"])
         migrate = COMPOSE["services"]["migrate"]
-        self.assertEqual(migrate["environment"]["FLYWAY_SCHEMAS"], "ontology")
-        self.assertEqual(migrate["environment"]["FLYWAY_DEFAULT_SCHEMA"], "ontology")
-        self.assertEqual(migrate["environment"]["FLYWAY_BASELINE_ON_MIGRATE"], "false")
-        self.assertEqual(migrate["environment"]["FLYWAY_VALIDATE_ON_MIGRATE"], "true")
-        self.assertEqual(migrate["environment"]["FLYWAY_CLEAN_DISABLED"], "true")
+        self.assertEqual(migrate["environment"]["DATABASE_NAME"], "${DATABASE_NAME:-ontology}")
+        self.assertEqual(set(migrate["secrets"]), {"db_admin_password", "runtime_db_password", "migrator_db_password", "bootstrap_db_password"})
+        self.assertEqual(migrate["entrypoint"], ["/usr/local/bin/ontology-migrate"])
+        self.assertEqual(migrate["restart"], "no")
+        migrate_script = (ROOT / "deploy/ontology-migrate-entrypoint.sh").read_text()
+        self.assertIn("-baselineOnMigrate=false", migrate_script)
+        self.assertIn("-validateOnMigrate=true", migrate_script)
+        self.assertIn("-cleanDisabled=true", migrate_script)
+        self.assertIn("trap finish_migration EXIT", migrate_script)
         self.assertIn("--wait", (ROOT / "deploy/ontology.sh").read_text())
 
     def test_age_and_workbench_oidc_are_configurable_without_admin_secrets(self):
         script = (ROOT / "deploy/ontology.sh").read_text()
         entrypoint = (ROOT / "deploy/api-entrypoint.sh").read_text()
         db_dockerfile = (ROOT / "deploy/Dockerfile.db").read_text()
-        migrate_dockerfile = (ROOT / "deploy/Dockerfile.migrate").read_text()
+        api_dockerfile = (ROOT / "deploy/Dockerfile.api").read_text()
         self.assertIn("graph.database.type", script)
         self.assertIn("graph.database.age.preloaded", script)
         self.assertIn("spring.flyway.enabled", script)
@@ -53,7 +60,11 @@ class DeploymentContracts(unittest.TestCase):
         self.assertIn("ontology.security.cookie-same-site", entrypoint)
         self.assertNotIn("bootstrap_db_password", entrypoint)
         self.assertIn("shared_preload_libraries=age", db_dockerfile)
-        self.assertIn("flyway/flyway:9.22.3", migrate_dockerfile)
+        self.assertIn("FROM flyway/flyway:9.22.3 AS flyway", api_dockerfile)
+        self.assertIn("COPY --from=flyway /flyway /opt/flyway", api_dockerfile)
+        self.assertIn("FROM eclipse-temurin:17-jre-noble", api_dockerfile)
+        self.assertIn("postgresql-client-16", api_dockerfile)
+        self.assertFalse((ROOT / "deploy/Dockerfile.migrate").exists())
 
     def test_bootstrap_input_is_mounted_as_private_directory(self):
         bootstrap = COMPOSE["services"]["bootstrap"]
@@ -105,11 +116,10 @@ class DeploymentContracts(unittest.TestCase):
     def test_database_name_is_shared_and_restore_reapplies_database_permissions(self):
         compose = COMPOSE["services"]
         self.assertEqual(compose["db"]["environment"]["POSTGRES_DB"], "${DATABASE_NAME:-ontology}")
-        self.assertIn("${DATABASE_NAME:-ontology}", compose["migrate"]["command"][0])
+        self.assertIn("${DATABASE_NAME:-ontology}", (ROOT / "deploy/ontology-migrate-entrypoint.sh").read_text())
         self.assertEqual(compose["package"]["environment"]["ONTOLOGY_PUBLIC_ORIGIN"], "${PUBLIC_ORIGIN:?请设置 PUBLIC_ORIGIN}")
         script = (ROOT / "deploy/ontology.sh").read_text()
         self.assertIn("DATABASE_NAME", (ROOT / "deploy/.env.example").read_text())
-        self.assertIn('"$database" "$DEPLOY/local/prepare-db-roles.sql"', script)
         self.assertIn('"$target" "$DEPLOY/local/prepare-db-roles.sql"', script)
         self.assertIn('"$target" "$DEPLOY/local/finalize-db-permissions.sql"', script)
         self.assertIn("pg_restore --no-owner --no-acl --exit-on-error", script)
@@ -122,7 +132,19 @@ class DeploymentContracts(unittest.TestCase):
         self.assertLess(restore_index, repair_index)
         self.assertLess(repair_index, prepare_index)
         self.assertLess(prepare_index, finalize_index)
-        self.assertIn("--force-recreate api web", script)
+        self.assertIn("compose run --rm --no-deps migrate", script)
+        self.assertIn("compose up -d --build --wait --wait-timeout 600 db api web", script)
+        self.assertNotIn("IMAGE_PREFIX", script)
+        self.assertNotIn("IMAGE_TAG", script)
+        self.assertNotIn("pull)", script)
+
+    def test_first_install_runs_database_migration_bootstrap_then_application(self):
+        script = (ROOT / "deploy/ontology.sh").read_text()
+        install = script.split("  install)\n", 1)[1].split("\n    ;;", 1)[0]
+        self.assertLess(install.index("compose up -d --wait --wait-timeout 120 db"), install.index("compose run --rm --no-deps migrate"))
+        self.assertLess(install.index("compose run --rm --no-deps migrate"), install.index("compose --profile tools run --rm --no-deps bootstrap"))
+        self.assertLess(install.index("compose --profile tools run --rm --no-deps bootstrap"), install.index("compose up -d --no-deps --wait --wait-timeout 600 api web"))
+        self.assertNotIn("package", install)
 
     def test_age_oid_repair_is_transactional_and_checks_catalog_associations(self):
         repair = (ROOT / "deploy/local/repair-restored-age-oids.sql").read_text()

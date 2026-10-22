@@ -1,4 +1,6 @@
-# API 与前端各自编译进同一候选 tag；运行阶段不带 Maven。
+# API 与 Flyway 迁移工具共用一个运行镜像；Maven 只留在构建阶段。
+FROM flyway/flyway:9.22.3 AS flyway
+
 FROM maven:3.9.9-eclipse-temurin-17 AS build
 WORKDIR /src
 COPY apps/server/pom.xml ./pom.xml
@@ -9,17 +11,25 @@ COPY apps/server/ontology-core/src ./ontology-core/src
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -ntp -f pom.xml -pl ontology-core -am -DskipTests package
 
-FROM eclipse-temurin:17-jre-jammy
+FROM eclipse-temurin:17-jre-noble
 WORKDIR /opt/ontology
 RUN useradd --system --uid 10001 --home-dir /opt/ontology --shell /usr/sbin/nologin ontology \
     && mkdir -p /opt/ontology /run/secrets/app \
     && chown -R 10001:10001 /opt/ontology /run/secrets/app
-RUN apt-get update && apt-get install -y --no-install-recommends curl gosu \
+RUN apt-get update && apt-get install -y --no-install-recommends curl gosu postgresql-client-16 \
+    && psql --version | grep -q ' 16\.' \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=flyway /flyway /opt/flyway
+ENV PATH="/opt/flyway:${PATH}"
 COPY --from=build /src/ontology-core/target/ontology-core-*.jar /opt/ontology/app.jar
+COPY apps/server/ontology-core/src/main/resources/flyway/ /opt/ontology/flyway/sql/
+COPY deploy/local/prepare-db-roles.sql deploy/local/finalize-db-permissions.sql /opt/ontology/migration/
 COPY deploy/logback-docker.xml /opt/ontology/logback-docker.xml
 COPY deploy/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
-RUN chmod 755 /usr/local/bin/api-entrypoint.sh
+COPY deploy/ontology-migrate-entrypoint.sh /usr/local/bin/ontology-migrate
+RUN chmod 755 /usr/local/bin/api-entrypoint.sh /usr/local/bin/ontology-migrate \
+    && test -x /opt/flyway/flyway \
+    && test -f /opt/ontology/flyway/sql/V0.0.1__init_database.sql
 EXPOSE 13001
 ENTRYPOINT ["/usr/local/bin/api-entrypoint.sh"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 CMD curl -fsS -o /dev/null http://127.0.0.1:13001/api/v1/auth/csrf
