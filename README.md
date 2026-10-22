@@ -2,7 +2,7 @@
 
 Ontology 独立图谱应用及 Workbench App 接入工程。前端使用 Umi / React / Ant Design，后端使用 Java 17 / Spring Boot，业务表与图数据存储在 PostgreSQL / Apache AGE。
 
-当前是本机开发测试候选版本。包含密码/Workbench OIDC 登录、数据库持久会话、账号激活与重置、项目角色权限、成员邀请、受限只读图查询，以及独立的 Agent OAuth2 授权、刷新轮换和撤销。Workbench 接入采用 Java 契约的 `0.2.0-rc.1` 源模板；真实平台联调与原库迁移验收须另行完成，不能复用历史 `0.1.1` 包。配置、启动、打包与验收步骤见 [候选版交付指南](docs/engineering/workbench-app-0.2.0-rc.1-release-and-manual-validation.md)。
+当前是本机开发测试候选版本。Workbench 接入采用 Java 契约的 `0.2.0-rc.1` 源模板；真实平台联调与原库迁移验收须另行完成，不能复用历史 `0.1.1` 包。Docker 单机交付入口、首次管理员初始化、升级及备份恢复见 [部署指南](docs/deployment.md)；Workbench App 构建与平台验收见 [候选版交付指南](docs/engineering/workbench-app-0.2.0-rc.1-release-and-manual-validation.md)。
 
 ## 目录
 
@@ -13,12 +13,12 @@ Ontology 独立图谱应用及 Workbench App 接入工程。前端使用 Umi / R
 | `integrations/workbench/` | App 配置模板、工具脚本与打包契约测试 |
 | `docs/design/` | 已确认的功能及技术方案 |
 | `docs/engineering/` | 工程流程、验证记录与后续任务 |
-| `deploy/local/` | 数据库、反向代理与应用配置示例 |
+| `deploy/` | Docker 单机部署 Compose、管理入口及本机验收配置 |
 | `scripts/` | 仓库检查与本地开发辅助脚本 |
 
 ## 开发与检查
 
-需要 Java 17、Maven、Node.js 22、Python 3 和 Docker。真实配置在本机受保护目录创建，不能复制进仓库。
+本机开发需要 Java 17、Maven、Node.js 22、Python 3 和 Docker。服务器部署只需要 Docker Engine、Docker Compose v2 和 POSIX shell；真实配置在服务器受保护目录创建，不能复制进仓库。
 
 ```sh
 cd apps/web
