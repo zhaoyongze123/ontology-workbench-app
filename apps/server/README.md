@@ -1,13 +1,11 @@
 # Ontology Server
 
-Java 17 / Spring Boot，业务数据与图数据使用 PostgreSQL / Apache AGE。`ontology-common` 提供存储与通用配置，`ontology-core` 提供身份、项目权限和图谱业务。
+Java 17 / Spring Boot 服务源码与测试。`ontology-common` 提供通用配置，`ontology-core` 提供身份、项目权限和图谱业务；PostgreSQL / Apache AGE 迁移与权限脚本位于 `deploy/local/`，由 Docker 部署 CLI 和隔离 IT 使用。
 
 ```sh
 mvn -B verify
 ```
 
-新多用户链路显式启用 `multiuser` profile，并加载仓库外的私有配置。参考 `../../deploy/local/application.example.yaml` 和根目录说明。迁移、初始化使用受控维护身份；日常运行账号不得具有 PostgreSQL 超级用户权限。
+服务部署、运行配置、首次管理员初始化和升级恢复统一见根目录 [Docker 部署指南](../../docs/deployment.md)。本目录不再提供手工 Java 启动配置；数据库集成验证使用 `bash ontology-it/run.sh` 创建的一次性 PostgreSQL/AGE 环境。
 
-已有 Flyway 脚本不得改写。旧数据库升级前必须备份、恢复并核对 AGE 目录关联和图数据。禁止将原数据库作为集成测试目标。
-
-本目录 Docker 和 `docs/docker/` 文件保留自原项目，尚未按新的身份与迁移边界验收；不能视为可直接上线的新部署方案。
+已有 Flyway 脚本不得改写。禁止将原数据库作为集成测试目标。

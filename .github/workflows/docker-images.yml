@@ -1,0 +1,175 @@
+name: Docker images
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 固定候选镜像版本标签，例如 0.2.0-rc.2
+        required: true
+        type: string
+      push:
+        description: 显式推送到私有 GHCR（默认仅构建验证）
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  # 默认分支仅构建校验；不登录仓库、不申请 packages 写权限。
+  validate-input:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate fixed version tag
+        run: |
+          case "$VERSION" in
+            ''|[!A-Za-z0-9_]*|*[!A-Za-z0-9._-]*) echo 'version 必须以字母、数字或下划线开头，且只允许点、下划线和连字符' >&2; exit 1 ;;
+          esac
+          [ "${#VERSION}" -le 128 ] || { echo 'version 标签最多 128 个字符' >&2; exit 1; }
+        env:
+          VERSION: ${{ inputs.version }}
+
+  deployment-bundle:
+    needs: validate-input
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Assemble deployment-only bundle
+        run: |
+          mkdir -p "$RUNNER_TEMP/deployment-bundle"
+          tar -czf "$RUNNER_TEMP/deployment-bundle/ontology-deployment-bundle.tar.gz" \
+            deploy/compose.yaml deploy/ontology.sh deploy/.env.example deploy/local docs/deployment.md
+      - uses: actions/upload-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.6
+        with:
+          name: ontology-deployment-bundle-${{ inputs.version }}
+          path: ${{ runner.temp }}/deployment-bundle/ontology-deployment-bundle.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  # 手动输入 push=false 时只构建，不创建 Release 或发布标签。
+  build:
+    if: ${{ !inputs.push }}
+    needs: validate-input
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            dockerfile: deploy/Dockerfile.api
+          - image: web
+            dockerfile: deploy/Dockerfile.web
+          - image: db
+            dockerfile: deploy/Dockerfile.db
+          - image: migrate
+            dockerfile: deploy/Dockerfile.migrate
+          - image: package
+            dockerfile: deploy/Dockerfile.package
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@v3
+      - name: Build linux/amd64 candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  ci-success:
+    if: ${{ inputs.push }}
+    needs: validate-input
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    steps:
+      - name: Require successful CI run for this exact main commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=100")
+          latest=$(jq -c --arg sha "$GITHUB_SHA" '
+            [.workflow_runs[]
+              | select(.head_sha == $sha and .event == "push" and .head_branch == "main")]
+            | sort_by(.created_at) | last // empty
+          ' <<< "$runs")
+          if [ -z "$latest" ]; then
+            echo "找不到当前提交 $GITHUB_SHA 在 main 上的 CI push 工作流记录；拒绝发布。" >&2
+            exit 1
+          fi
+          status=$(jq -r '.status' <<< "$latest")
+          conclusion=$(jq -r '.conclusion // "none"' <<< "$latest")
+          run_url=$(jq -r '.html_url' <<< "$latest")
+          if [ "$status" != completed ] || [ "$conclusion" != success ]; then
+            echo "当前提交的最新合法 CI 尚未成功（status=$status, conclusion=$conclusion）：$run_url" >&2
+            exit 1
+          fi
+          printf 'CI run passed for sha=%s run=%s\n' "$GITHUB_SHA" "$run_url"
+
+  # 只有用户显式选择 push=true 才获取最小发布权限，并输出每个镜像的 digest。
+  publish:
+    if: ${{ inputs.push }}
+    needs: [validate-input, ci-success]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            dockerfile: deploy/Dockerfile.api
+          - image: web
+            dockerfile: deploy/Dockerfile.web
+          - image: db
+            dockerfile: deploy/Dockerfile.db
+          - image: migrate
+            dockerfile: deploy/Dockerfile.migrate
+          - image: package
+            dockerfile: deploy/Dockerfile.package
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@v3
+      - name: Sign in to GHCR with the job token
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish fixed candidate tags
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/ontology-${{ matrix.image }}:${{ inputs.version }}
+            ghcr.io/${{ github.repository }}/ontology-${{ matrix.image }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      - name: Report immutable image digest
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/ontology-${{ matrix.image }}
+          VERSION: ${{ inputs.version }}
+          REVISION: ${{ github.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          printf 'image=%s:%s\nrevision=%s\ndigest=%s\n' "$IMAGE" "$VERSION" "$REVISION" "$DIGEST"
+      - name: Verify the published private image can be pulled by digest
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/ontology-${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: docker pull "$IMAGE@$DIGEST"

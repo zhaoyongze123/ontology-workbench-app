@@ -6,6 +6,8 @@
 **/private/
 **/data/
 **/logs/
+deploy/private/
+deploy/output/
 *.log
 *.pid
 *.dump

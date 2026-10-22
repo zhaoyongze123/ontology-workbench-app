@@ -31,6 +31,29 @@ class BootstrapServiceTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
+    void productionInputRequiresOneNamedAdminAndStrongNonDefaultPassword() {
+        BootstrapService.ProductionBootstrapInput valid = new BootstrapService.ProductionBootstrapInput(
+                1, "owner", "Production Owner", "a-long-random-production-password");
+        BootstrapService.validateProduction(valid);
+
+        assertThatThrownBy(() -> BootstrapService.validateProduction(
+                new BootstrapService.ProductionBootstrapInput(1, "admin", "Admin", "admin")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> BootstrapService.validateProduction(
+                new BootstrapService.ProductionBootstrapInput(1, "owner", "Owner", "short")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> BootstrapService.validateProduction(
+                new BootstrapService.ProductionBootstrapInput(2, "owner", "Owner", "a-long-random-password")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> BootstrapService.validateProduction(
+                new BootstrapService.ProductionBootstrapInput(1, " owner", "Owner", "a-long-random-password")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> BootstrapService.validateProduction(
+                new BootstrapService.ProductionBootstrapInput(1, "owner ", "Owner", "a-long-random-password")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void rejectsAutomaticOrPublicBootstrapInput() {
         BootstrapInput input = input(true, false);
         assertThatThrownBy(() -> BootstrapService.validate(input))

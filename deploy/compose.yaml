@@ -1,0 +1,117 @@
+services:
+  db:
+    image: ${IMAGE_PREFIX:-ontology}/ontology-db:${IMAGE_TAG:?请设置固定发布版本 IMAGE_TAG}
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-ontology}
+      POSTGRES_USER: ontology_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
+    secrets:
+      - db_admin_password
+      - runtime_db_password
+      - migrator_db_password
+      - bootstrap_db_password
+    volumes:
+      - ontology_db:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ontology_admin -d ${DATABASE_NAME:-ontology}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
+
+  api:
+    image: ${IMAGE_PREFIX:-ontology}/ontology-api:${IMAGE_TAG:?请设置固定发布版本 IMAGE_TAG}
+    environment:
+      ONTOLOGY_PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?请设置 PUBLIC_ORIGIN}
+      SERVER_PORT: 13001
+      SERVER_FORWARD_HEADERS_STRATEGY: native
+      SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES: ${API_TRUSTED_PROXY_REGEX:?请设置 API_TRUSTED_PROXY_REGEX}
+      SPRING_FLYWAY_ENABLED: "false"
+      LOGGING_CONFIG: file:/opt/ontology/logback-docker.xml
+      SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.boot.autoconfigure.neo4j.Neo4jAutoConfiguration,org.springframework.boot.autoconfigure.data.neo4j.Neo4jDataAutoConfiguration,org.springframework.boot.autoconfigure.data.neo4j.Neo4jRepositoriesAutoConfiguration
+    volumes:
+      - ./private/api-config:/run/secrets/app:ro
+    depends_on:
+      db: {condition: service_healthy}
+    networks: [backend, egress]
+    restart: unless-stopped
+    logging: *logging
+
+  web:
+    image: ${IMAGE_PREFIX:-ontology}/ontology-web:${IMAGE_TAG:?请设置固定发布版本 IMAGE_TAG}
+    ports:
+      - "127.0.0.1:${HTTP_BIND_PORT:-18083}:8080"
+    environment:
+      EDGE_TRUSTED_PROXY_CIDRS: ${EDGE_TRUSTED_PROXY_CIDRS:?请设置 HTTPS 网关来源网段}
+    depends_on:
+      api: {condition: service_healthy}
+    networks:
+      edge: {}
+      backend:
+        ipv4_address: ${WEB_BACKEND_IP:-10.203.35.10}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *logging
+
+  migrate:
+    image: ${IMAGE_PREFIX:-ontology}/ontology-migrate:${IMAGE_TAG:?请设置固定发布版本 IMAGE_TAG}
+    profiles: [tools]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["export FLYWAY_URL=jdbc:postgresql://db:5432/${DATABASE_NAME:-ontology} FLYWAY_USER=ontology_migrator FLYWAY_PASSWORD=\"$(cat /run/secrets/migrator_db_password)\"; flyway -locations=filesystem:/flyway/sql migrate"]
+    secrets: [migrator_db_password]
+    environment:
+      FLYWAY_SCHEMAS: ontology
+      FLYWAY_DEFAULT_SCHEMA: ontology
+      FLYWAY_BASELINE_ON_MIGRATE: "false"
+      FLYWAY_VALIDATE_ON_MIGRATE: "true"
+      FLYWAY_CLEAN_DISABLED: "true"
+    networks: [backend]
+    depends_on: {db: {condition: service_healthy}}
+
+  bootstrap:
+    image: ${IMAGE_PREFIX:-ontology}/ontology-api:${IMAGE_TAG:?请设置固定发布版本 IMAGE_TAG}
+    profiles: [tools]
+    entrypoint: ["java", "-jar", "/opt/ontology/app.jar"]
+    command: ["--spring.profiles.active=bootstrap,multiuser", "--ontology.bootstrap.apply=true", "--spring.main.web-application-type=none", "--ontology.bootstrap.mode=production", "--ontology.bootstrap.file=/run/bootstrap-input/bootstrap-admin.json", "--spring.config.import=optional:configtree:/run/secrets/bootstrap/"]
+    environment:
+      SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.boot.autoconfigure.neo4j.Neo4jAutoConfiguration,org.springframework.boot.autoconfigure.data.neo4j.Neo4jDataAutoConfiguration,org.springframework.boot.autoconfigure.data.neo4j.Neo4jRepositoriesAutoConfiguration
+    volumes:
+      - ./private/bootstrap-config:/run/secrets/bootstrap:ro
+      - ./private/bootstrap-input:/run/bootstrap-input:ro
+    networks: [backend]
+    depends_on: {db: {condition: service_healthy}}
+
+  package:
+    image: ${IMAGE_PREFIX:-ontology}/ontology-package:${IMAGE_TAG:?请设置固定发布版本 IMAGE_TAG}
+    profiles: [tools]
+    environment:
+      ONTOLOGY_PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?请设置 PUBLIC_ORIGIN}
+    volumes:
+      - ./private/package.json:/run/config.json:ro
+      - ./private/package-output:/output
+    command: ["--config", "/run/config.json", "--output", "/output"]
+
+networks:
+  edge: {}
+  egress: {}
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${BACKEND_SUBNET:-10.203.35.0/24}
+volumes:
+  ontology_db: {}
+secrets:
+  db_admin_password: {file: private/db-admin-password}
+  runtime_db_password: {file: private/runtime-db-password}
+  migrator_db_password: {file: private/migrator-db-password}
+  bootstrap_db_password: {file: private/bootstrap-db-password}

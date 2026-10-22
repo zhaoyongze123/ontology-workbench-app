@@ -2,28 +2,16 @@
 
 本版本是私有开发验收候选包。源码契约和离线打包通过，不代表真实 Workbench 已上传、App OAuth 已完成、Secret 隔离已实测或数据库切换已批准。管理员上传 ZIP 含 Workbench App client secret，只能在批准的管理通道使用；普通用户发布包、源码仓库、issue、日志和共享附件不得出现该 secret。Java 上游 Workbench OIDC client id/secret 只存在服务端私密配置，与 App client 凭据完全分开。
 
-## Java 服务和包配置对齐
+## 部署配置和包构建
 
-Java `ontology.security.public-origin` 是唯一公开 Origin，必须和打包配置 `serviceOrigin` 完全相同；只填写 origin，不包含 `/api/v1`。它用于 App Manifest/API URL、可信浏览器 Origin 和 Workbench OIDC callback 前缀。OAuth issuer 则由该 Origin 加上 `server.servlet.context-path` 组成（当前为 `/api/v1`），SAS 的授权、Token、撤销和 introspection endpoint 再相对 issuer 生成。当前 discovery URI 按 RFC 8414 为 `https://<origin>/.well-known/oauth-authorization-server/api/v1`；[nginx.example.conf](../../deploy/local/nginx.example.conf) 展示了将其精确转发到 Java context 内 metadata 路径的规则。私有运行配置按 [application.example.yaml](../../deploy/local/application.example.yaml) 准备，并仅从仓库外权限受限目录加载。服务端至少需要 `ONTOLOGY_PUBLIC_ORIGIN`、数据库连接变量及上游 Workbench OIDC client credentials；上游凭据不要复制到 App 配置或包内。
-
-在隔离数据库迁移和初始化完成后，从仓库根目录启动已构建的 Java 服务，必须显式启用 `multiuser`，不能用默认配置替代多用户验收：
-
-```sh
-java -jar apps/server/ontology-core/target/ontology-core-0.0.1.jar \
-  --spring.profiles.active=multiuser \
-  --spring.config.additional-location=file:/绝对路径/private/application.local.yaml
-```
-
-私有配置中的数据库应使用隔离副本的非超级用户账号；上游凭据核对完成后，将 `ontology.workbench.enabled` 设为 `true`。前端使用在 `apps/web` 执行 `MULTIUSER_BUILD=1 npm run build` 生成的 `dist-multiuser`，并将私有 Nginx 配置的静态文件目录指向该目录。Nginx 18083、Java 13002 是独立测试入口，不覆盖旧 18081/13001 服务。
+服务运行、迁移、首个管理员、前端静态资源和反向代理统一通过 [Docker 部署指南](../deployment.md) 验收；不再支持从宿主机手动启动 Java/Nginx。部署 `.env` 中的 `PUBLIC_ORIGIN` 是唯一公开 Origin，由 `init-config` 写入 API/bootstrap 配置，打包容器也会用它覆盖 App JSON 内的 `serviceOrigin`，无需维护第二份域名。上游 Workbench OIDC client credentials 只保存在 `deploy/private/api-config/`，不得进入 App JSON 或 ZIP。
 
 Java 管理员先创建 App OAuth client：display name `Ontology`、Workbench 固定 callback `https://app.workbench.aos.work/basilcraw/api/apps/oauth2/callback`、认证方式 body/`client_secret_post`、PKCE 开启，并包含 `profile`、`ontology.read`、`ontology.write`、`ontology.manage`。把新建结果仅存入本机私密 App 打包配置；旧 client 若 redirect 或 scopes 不符合，须登记新 client。WorkBench 固定 App callback 通常不随 Ontology 域名改变；Java 上游登录 OIDC callback 是 `${ONTOLOGY_PUBLIC_ORIGIN}/oidc/callback`，改域名时须同步 Workbench 登录 OIDC 配置并重新做真实登录回调验证。
 
-`serviceOrigin` 只能是纯 HTTPS origin。一次生成会产出版本、SHA-256、脱敏校验报告和管理员 ZIP：
+打包通过部署 CLI 执行；`PUBLIC_ORIGIN` 只能是纯 HTTPS origin，package 镜像据此生成 App 地址、SHA-256、脱敏校验报告和管理员 ZIP：
 
 ```sh
-python3 integrations/workbench/tools/finalize.py \
-  --config /绝对路径/private/app-package.local.json \
-  --output /绝对路径/private/ontology-app-release
+deploy/ontology.sh package-app
 ```
 
 `integrations/workbench/config.example.json` 仅是无凭据格式示例，不能用于生成可上传 ZIP。必须由管理员先在 Java Admin 为正式环境创建 `Ontology` App client，再把真实 id/secret 写入仓库外的私有副本。当前未提供真实 App client 凭据，因此没有生成或声称存在可用管理员上传包。
@@ -32,25 +20,9 @@ python3 integrations/workbench/tools/finalize.py \
 
 ## 隔离数据、备份与恢复边界
 
-所有迁移、权限、备份恢复、用户/项目归属核对和回滚均单独归 #17。本交付没有操作原运行库、没有切换运行库。临时集成测试库的迁移和数据库测试证据以运行报告为准，不能代替对原库备份恢复、存量归属与回滚的验收。最终验收只能在原库的备份恢复副本或一次性隔离库上做，保留原库不变：
+所有迁移、权限、备份恢复、用户/项目归属核对和回滚仍需按 #17 留存真实证据。本交付没有操作原运行库、没有切换运行库。临时集成测试库的结果不能代替原库备份恢复、存量归属与回滚验收。备份、隔离恢复、运行角色校验和切换步骤统一见 [部署指南](../deployment.md#升级备份与恢复)；不得手工启动 Java 执行迁移或对未备份的原数据库试恢复。
 
-1. 维护人员先记录原库标识、Flyway 历史、拥有者/项目归属摘要和备份校验值；暂停写入后做一份新备份。凭据与业务正文不放在 issue 或普通日志。
-2. 把备份恢复到名称明确、网络仅本机可达的隔离数据库；先核对 schema、项目 OWNER、节点/关系总量及业务 ID 样本，再按受控迁移账号执行未应用的增量脚本。不得改写已执行 migration。
-3. 只把非超级用户、无 `BYPASSRLS` 的运行账号交给 Java；对实际对象权限、AGE 建图/查询能力和跨项目拒绝做证据核验。完成停机备份/恢复演练后才允许另行审议本机切换；本候选包不会切换原库。
-4. 失败时停止写流量，在隔离库保留错误证据并恢复该隔离副本；原库继续保持原状态。任何未来本机切换要先有切换前备份及已验证恢复路径，并按 #17 的安全条件回滚，不得回到公开无权限入口。
-
-业务初始化使用单独的 bootstrap 维护身份，而不是日常 Java 运行账号。先在已完成备份恢复和存量归属核对的隔离数据库运行 `prepare-db-roles.sql`、应用数据库迁移并运行 `finalize-db-permissions.sql`；然后从仓库外复制 [application-bootstrap.example.yaml](../../deploy/local/application-bootstrap.example.yaml)，只配置 bootstrap 登录账号连接和私有输入 JSON 路径。该角色只能读取冲突检测所需列、插入初始化身份/项目/成员/审计及 ledger，不能访问 OAuth 客户端，也不能更新或删除数据。JSON 严格符合 `BootstrapService.BootstrapInput`，含 7 用户、2 测试项目；目录 `0700`、文件 `0600`。执行命令：
-
-```sh
-java -jar apps/server/ontology-core/target/ontology-core-0.0.1.jar \
-  --spring.config.additional-location=file:/绝对路径/private/application.bootstrap.local.yaml \
-  --spring.profiles.active=bootstrap \
-  --ontology.bootstrap.apply=true \
-  --spring.main.web-application-type=none \
-  --ontology.bootstrap.file=/绝对路径/private/multiuser-bootstrap.local.json
-```
-
-`application.bootstrap.local.yaml` 必须使用独立的 `ONTOLOGY_BOOTSTRAP_DB_USER` / `ONTOLOGY_BOOTSTRAP_DB_PASSWORD`，且只连接隔离副本；启动前确认 JDBC host/database，不能复用运行账号或省略配置而落到默认数据库。密码与用户名相同是源码限定的本地测试策略，不用于正式用户。命令要求唯一管理员 `admin`，在无 OWNER 的存量项目上为其建立 OWNER 关系；遇到已有身份或 OWNER 冲突会停止，不自动覆盖。重复执行仅核验 bootstrap ledger、用户和项目，不重置密码。该命令尚未用于原运行库；不要把开发密码输入正式/原有数据库。HTTP ACL smoke 也会创建项目/图谱记录，只能指向隔离副本。
+正式首管理员使用部署 CLI 的 production bootstrap：JSON 只包含被配置的一个管理员，不创建七个测试用户或测试项目；输入路径、权限、幂等和冲突条件见 [首次部署步骤](../deployment.md#首次安装)。迁移与角色收口由 Compose 维护镜像执行，不要复制旧 Java bootstrap YAML 或手动启动命令。HTTP ACL smoke 会创建项目/图谱记录，只能指向隔离副本。
 
 ## 自动化证据
 
@@ -94,10 +66,10 @@ Issue #18 的验收依赖真实 Workbench 授权和账号隔离，Issue #19 明�
 
 ## 用户最终 Workbench 联调步骤
 
-1. 运维确认服务 origin、HTTPS、Nginx 转发与 OIDC discovery/JWKS，再从受保护的 Java 运行配置启用上游 Workbench OIDC。实际更换域名时同步 `ONTOLOGY_PUBLIC_ORIGIN`、可信 Origin、`ontology.workbench.redirect-uri` 和 Workbench 登录 OIDC callback，重启 Java/Nginx 后以真实用户验证登录回跳。
+1. 运维按 [Docker 部署指南](../deployment.md) 配置 HTTPS 反向代理与服务域名；单一 `PUBLIC_ORIGIN` 驱动 API、OIDC discovery/JWKS 和 App 地址。启用上游 Workbench OIDC 时，将对应 Client ID/Secret 保存在受保护的 `deploy/private/api-config/`，并以真实用户验证登录回跳。
 2. 管理员登录 `/ontology-management/admin/oauth-clients` 页面新建 `Ontology` App client（后端接口为 `/api/v1/admin/oauth/clients`），登记正式固定 App callback、PKCE 和四个 scope。将响应里的 App client id/secret 放入仓库外的私有 package JSON；不要把 Java 上游 OIDC client secret 混进来。
-3. 用工具生成 `0.2.0-rc.1` ZIP，记录 SHA-256。受限管理员检查 Manifest 与 hash，然后只通过 Workbench 管理入口上传；保存版本和 hash，不把 ZIP 分享给普通成员。
+3. 通过 `deploy/ontology.sh package-app` 生成 `0.2.0-rc.1` ZIP，记录 SHA-256。受限管理员检查 Manifest 与 hash，然后只通过 Workbench 管理入口上传；保存版本和 hash，不把 ZIP 分享给普通成员。
 4. 普通测试用户打开 Workbench App，完成 OAuth consent。观察回调、`getCurrentUser` 的 `id/username/name` 映射和一个只读 Action；用有/无项目、只读与可写身份分别验证 scope×项目权限矩阵。
 5. 等 access token 自然到期后触发一次请求，验证 Workbench 使用 refresh endpoint 轮换 refresh token、旧 token 不能复用。随后从 Workbench 断开连接，并分别重试旧 access token 和 refresh token，确认两者都失效；记录 HTTP 状态、脱敏请求路径和时间，不记录 Authorization header 或 token 内容。
 6. 用第二个内部账号核验成员资源、iframe、Action、导出文件、模型上下文和错误日志里没有 App Secret、上游 OIDC Secret 或令牌原值。按 #19 保留脱敏结果和可见性结论。
-7. 按 #17 另做存量备份恢复和迁移/回滚演练。平台 OAuth、#19 秘密可见性、#17 数据恢复任一项未验收，都不得把 RC 候选称为完整发布，也不能切换原数据库。
+7. 按 [Docker 部署指南](../deployment.md#升级备份与恢复) 和 #17 另做存量备份恢复和迁移/回滚演练。平台 OAuth、#19 秘密可见性、#17 数据恢复任一项未验收，都不得把 RC 候选称为完整发布，也不能切换原数据库。

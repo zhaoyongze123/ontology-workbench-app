@@ -1,0 +1,25 @@
+# API 与前端各自编译进同一候选 tag；运行阶段不带 Maven。
+FROM maven:3.9.9-eclipse-temurin-17 AS build
+WORKDIR /src
+COPY apps/server/pom.xml ./pom.xml
+COPY apps/server/ontology-common/pom.xml ./ontology-common/pom.xml
+COPY apps/server/ontology-core/pom.xml ./ontology-core/pom.xml
+COPY apps/server/ontology-common/src ./ontology-common/src
+COPY apps/server/ontology-core/src ./ontology-core/src
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -ntp -f pom.xml -pl ontology-core -am -DskipTests package
+
+FROM eclipse-temurin:17-jre-jammy
+WORKDIR /opt/ontology
+RUN useradd --system --uid 10001 --home-dir /opt/ontology --shell /usr/sbin/nologin ontology \
+    && mkdir -p /opt/ontology /run/secrets/app \
+    && chown -R 10001:10001 /opt/ontology /run/secrets/app
+RUN apt-get update && apt-get install -y --no-install-recommends curl gosu \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /src/ontology-core/target/ontology-core-*.jar /opt/ontology/app.jar
+COPY deploy/logback-docker.xml /opt/ontology/logback-docker.xml
+COPY deploy/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
+RUN chmod 755 /usr/local/bin/api-entrypoint.sh
+EXPOSE 13001
+ENTRYPOINT ["/usr/local/bin/api-entrypoint.sh"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 CMD curl -fsS -o /dev/null http://127.0.0.1:13001/api/v1/auth/csrf

@@ -34,7 +34,9 @@ def is_placeholder(value):
 def inspect_file(name, content):
     path = Path(name)
     problems = []
-    if (set(path.parts) & FORBIDDEN_PARTS or path.suffix in FORBIDDEN_SUFFIXES
+    # Dockerfile.db 是镜像构建定义，后缀恰好与数据库运行产物相同；只允许这一个源码路径。
+    docker_db_source = name == "deploy/Dockerfile.db"
+    if (set(path.parts) & FORBIDDEN_PARTS or (path.suffix in FORBIDDEN_SUFFIXES and not docker_db_source)
             or (path.name.startswith(".env") and not path.name.endswith(".example"))):
         problems.append("运行文件或私有配置不能入库")
     if len(content) > 5 * 1024 * 1024:
@@ -45,7 +47,11 @@ def inspect_file(name, content):
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
+        if docker_db_source:
+            problems.append("deploy/Dockerfile.db 必须是 UTF-8 Dockerfile 源码")
         return problems
+    if docker_db_source and not any(line.lstrip().upper().startswith("FROM ") for line in text.splitlines()):
+        problems.append("deploy/Dockerfile.db 必须包含 FROM 指令")
     # 测试夹具中的占位口令按测试路径区分，绝不把生产配置排除出检查。
     test_fixture = "src/test" in name or "/tests/" in "/" + name
     if not test_fixture:
