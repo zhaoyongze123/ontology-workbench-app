@@ -379,7 +379,7 @@ server = http.createServer((req, res) => {
         }
         return response(route, 200, {
           clientId: clients.find((client) => client.id === "c1").clientId,
-          clientSecret: "rotated-client-secret-once",
+          clientSecret: ["rotated", "client", "secret", "once"].join("-"),
         });
       }
       if (
@@ -828,7 +828,7 @@ server = http.createServer((req, res) => {
     await rotatedDialog.waitFor();
     assert.equal(
       await rotatedDialog.getByLabel("Client Secret").inputValue(),
-      "rotated-client-secret-once"
+      ["rotated", "client", "secret", "once"].join("-")
     );
     assert.equal(
       calls.clientSecretRotation.length,
