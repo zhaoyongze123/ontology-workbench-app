@@ -1,5 +1,5 @@
 import { CopyOutlined } from '@ant-design/icons';
-import { Button, Space, Tooltip, Typography } from 'antd';
+import { Button, Tooltip, Typography } from 'antd';
 import React from 'react';
 import styles from './CopyableValue.less';
 
@@ -10,7 +10,7 @@ type CopyableValueProps = {
   onCopySuccess: (message: string) => void;
 };
 
-/** 长标识仅在表格里省略；复制始终使用原始值，详情页提供手动保存路径。 */
+/** 长值在表格里省略；复制始终使用原始值，详情页提供手动保存路径。 */
 const CopyableValue: React.FC<CopyableValueProps> = ({
   value,
   label,
@@ -29,7 +29,7 @@ const CopyableValue: React.FC<CopyableValueProps> = ({
   };
 
   return (
-    <Space className={styles.value} size={4}>
+    <div className={styles.value}>
       <Tooltip title={value} placement="topLeft">
         <Typography.Text className={styles.text} code ellipsis>
           {value}
@@ -37,12 +37,12 @@ const CopyableValue: React.FC<CopyableValueProps> = ({
       </Tooltip>
       <Button
         type="text"
-        size="small"
+        className={styles.copyButton}
         icon={<CopyOutlined aria-hidden="true" />}
         aria-label={`复制${label}`}
         onClick={() => void copy()}
       />
-    </Space>
+    </div>
   );
 };
 

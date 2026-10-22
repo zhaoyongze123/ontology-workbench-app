@@ -5,9 +5,9 @@ import com.devin.ontology.identity.InternalUser;
 import com.devin.ontology.security.LoginUserPrincipal;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.security.Principal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.Principal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -21,6 +21,9 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.OAuth2AuthorizationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
@@ -30,7 +33,6 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
-import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,12 +58,12 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
             instant(rs.getTimestamp("revoked_at")));
 
     private final JdbcTemplate jdbc;
-    private final RegisteredClientRepository clients;
+    private final AgentClientRepository clients;
     private final IdentityRepository identities;
     private final ObjectMapper mapper;
 
     public DigestOAuth2AuthorizationService(final JdbcTemplate jdbc,
-            final RegisteredClientRepository clients, final IdentityRepository identities,
+            final AgentClientRepository clients, final IdentityRepository identities,
             final ObjectMapper mapper) {
         this.jdbc = jdbc;
         this.clients = clients;
@@ -104,12 +106,44 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
         Instant finalAbsoluteExpiry = absoluteExpiry;
         String scopes = String.join(" ", authorization.getAuthorizedScopes().stream().sorted().toList());
 
-        int existing = jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_authorization WHERE id = ?",
-                Integer.class, authorization.getId());
-        if (existing == 0) {
+        AuthorizationState existing = jdbc.query("SELECT refresh_token_digest, revoked_at "
+                        + "FROM ontology.og_app_authorization WHERE id = ?",
+                (rs, rowNum) -> new AuthorizationState(rs.getString("refresh_token_digest"),
+                        instant(rs.getTimestamp("revoked_at"))), authorization.getId())
+                .stream().findFirst().orElse(null);
+        if (existing == null) {
+            // 新授权按管理端相同顺序先锁客户端，再复查授权 ID。
+            // 先读到旧配置的请求会等待管理事务提交，随后按新配置重新校验，不能越过批量撤销。
+            AgentClientRepository.AppClientView currentClient = clients.lockForUpdate(
+                    authorization.getRegisteredClientId());
+            if (currentClient == null || !currentClient.enabled()) {
+                throw authorizationRejected(OAuth2ErrorCodes.INVALID_REQUEST,
+                        "OAuth 客户端当前不可用，请重新发起授权。");
+            }
+            existing = jdbc.query("SELECT refresh_token_digest, revoked_at "
+                            + "FROM ontology.og_app_authorization WHERE id = ? FOR UPDATE",
+                    (rs, rowNum) -> new AuthorizationState(rs.getString("refresh_token_digest"),
+                            instant(rs.getTimestamp("revoked_at"))), authorization.getId())
+                    .stream().findFirst().orElse(null);
+        } else {
+            // 已有令牌更新保持授权行锁顺序；Token 请求在进入此处前已由查找路径锁住该行。
+            existing = jdbc.query("SELECT refresh_token_digest, revoked_at "
+                            + "FROM ontology.og_app_authorization WHERE id = ? FOR UPDATE",
+                    (rs, rowNum) -> new AuthorizationState(rs.getString("refresh_token_digest"),
+                            instant(rs.getTimestamp("revoked_at"))), authorization.getId())
+                    .stream().findFirst().orElse(null);
+        }
+        if (existing == null) {
             if (principal == null || authorizationRequest == null) {
                 throw new IllegalArgumentException("新授权必须来自已验证的网页登录会话");
             }
+            AgentClientRepository.AppClientView currentClient = clients.viewByRecordId(
+                    authorization.getRegisteredClientId());
+            if (currentClient == null || !currentClient.enabled()) {
+                throw authorizationRejected(OAuth2ErrorCodes.INVALID_REQUEST,
+                        "OAuth 客户端当前不可用，请重新发起授权。");
+            }
+            validateCurrentClientConfiguration(authorization, authorizationRequest, currentClient);
             jdbc.update("INSERT INTO ontology.og_app_authorization(id, client_record_id, user_id, auth_version, "
                             + "login_at, absolute_expires_at, scopes, authorization_request_json, "
                             + "consent_state_digest, consent_state_expires_at, code_digest, "
@@ -128,9 +162,14 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
             return;
         }
 
-        // queryForObject 可正确返回 SQL NULL；Stream.findFirst() 遇到 null 会抛 NPE。
-        String oldRefreshDigest = jdbc.queryForObject("SELECT refresh_token_digest "
-                + "FROM ontology.og_app_authorization WHERE id = ? FOR UPDATE", String.class, authorization.getId());
+        if (existing.revokedAt() != null) {
+            // 撤销事务若先完成，不允许并发中的旧授权请求重新写入授权码或令牌。
+            String errorCode = accessValue != null || refreshValue != null
+                    ? OAuth2ErrorCodes.INVALID_GRANT : OAuth2ErrorCodes.INVALID_REQUEST;
+            throw authorizationRejected(errorCode,
+                    "该授权已失效，请重新发起授权。");
+        }
+        String oldRefreshDigest = existing.refreshTokenDigest();
         String newRefreshDigest = digest(refreshValue);
         // 本应用按授权族撤销：RFC 7009 收到 access/refresh token revoke 后，不能留下仍可刷新的半授权。
         // 只识别这次协议对象里的访问/刷新令牌失效，授权码消费本身不属于撤销。
@@ -170,6 +209,26 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
                 && (oldRefreshDigest == null || !oldRefreshDigest.equals(newRefreshDigest))) {
             insertRefreshHistory(authorization.getId(), newRefreshDigest);
         }
+    }
+
+    private void validateCurrentClientConfiguration(final OAuth2Authorization authorization,
+            final OAuth2AuthorizationRequest request, final AgentClientRepository.AppClientView currentView) {
+        String requestedFingerprint = string(request.getAdditionalParameters().get(
+                ClientConfigurationSnapshotAuthenticationConverter.CONFIG_FINGERPRINT_PARAMETER));
+        String currentFingerprint = clients.authorizationConfigFingerprintByRecordId(currentView.id());
+        if (!currentView.clientId().equals(request.getClientId())
+                || !currentView.redirectUri().equals(request.getRedirectUri())
+                || !currentView.scopes().containsAll(request.getScopes())
+                || !request.getScopes().containsAll(authorization.getAuthorizedScopes())
+                || !currentView.scopes().containsAll(authorization.getAuthorizedScopes())
+                || requestedFingerprint == null || !requestedFingerprint.equals(currentFingerprint)) {
+            throw authorizationRejected(OAuth2ErrorCodes.INVALID_REQUEST,
+                    "OAuth 客户端配置已变化，请重新发起授权。");
+        }
+    }
+
+    private OAuth2AuthorizationException authorizationRejected(final String errorCode, final String description) {
+        return new OAuth2AuthorizationException(new OAuth2Error(errorCode, description, null));
     }
 
     @Override
@@ -472,6 +531,7 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
     }
 
     private record RefreshHistory(String authorizationId, String status) { }
+    private record AuthorizationState(String refreshTokenDigest, Instant revokedAt) { }
     private record AuthorizationRow(String id, String clientRecordId, String clientId, String userId,
             long authVersion, Instant loginAt, Instant absoluteExpiresAt, String scopes,
             String authorizationRequestJson, String codeDigest, Instant codeIssuedAt, Instant codeExpiresAt,

@@ -1,9 +1,11 @@
 package com.devin.ontology.oauth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.devin.ontology.security.LoginUserPrincipal;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.net.CookieManager;
@@ -21,6 +23,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -32,7 +37,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -57,6 +70,15 @@ class AgentOAuthAuthorizationIntegrationTest {
 
     @Autowired
     private ObjectMapper mapper;
+
+    @Autowired
+    private AgentClientRepository clientRepository;
+
+    @Autowired
+    private DigestOAuth2AuthorizationService authorizationService;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     private CookieManager cookies;
     private java.net.http.HttpClient client;
@@ -407,6 +429,289 @@ class AgentOAuthAuthorizationIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_audit_event "
                 + "WHERE event_type = 'APP_CLIENT_DISABLED' AND actor_user_id = ? "
                 + "AND details_json->>'clientId' = ?", Long.class, userId, clientId)).isEqualTo(1L);
+    }
+
+    @Test
+    void clientConfigurationChangesRevokeGrantsButDisplayNameChangesDoNot() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth configuration probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile", "ontology.read")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        JsonNode clientBody = mapper.readTree(created.body());
+        String clientId = clientBody.path("clientId").asText();
+        String clientSecret = clientBody.path("clientSecret").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+        String accessToken = authorizeAndExchange(client, clientId, clientSecret, "profile ontology.read");
+
+        csrf = csrfToken();
+        HttpResponse<String> renamed = putJson("/admin/oauth/clients/" + clientRecordId, csrf,
+                Map.of("displayName", "Renamed OAuth client", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile", "ontology.read")));
+        assertThat(renamed.statusCode()).isEqualTo(200);
+        assertThat(mapper.readTree(renamed.body()).path("clientId").asText()).isEqualTo(clientId);
+        assertThat(getBearer(accessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(200);
+
+        String updatedRedirectUri = "https://app.example.test/updated-callback";
+        csrf = csrfToken();
+        HttpResponse<String> updated = putJson("/admin/oauth/clients/" + clientRecordId, csrf,
+                Map.of("displayName", "Renamed OAuth client", "redirectUri", updatedRedirectUri,
+                        "scopes", List.of("profile")));
+        assertThat(updated.statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT redirect_uri FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo(updatedRedirectUri);
+        assertThat(jdbc.queryForObject("SELECT scopes FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo("profile");
+        assertThat(jdbc.queryForObject("SELECT revoked_at IS NOT NULL AND access_active = FALSE "
+                + "FROM ontology.og_app_authorization WHERE client_record_id = ? AND user_id = ?",
+                Boolean.class, clientRecordId, userId)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_authorization_consent "
+                + "WHERE client_record_id = ?", Long.class, clientRecordId)).isZero();
+        assertThat(getBearer(accessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+
+        String details = jdbc.queryForObject("SELECT details_json::text FROM ontology.og_audit_event "
+                + "WHERE event_type = 'APP_CLIENT_UPDATED' AND actor_user_id = ? "
+                + "AND details_json->>'clientId' = ? ORDER BY create_time DESC LIMIT 1", String.class, userId, clientId);
+        assertThat(details).contains("redirectUri", "scopes").doesNotContain(updatedRedirectUri);
+    }
+
+    @Test
+    void invalidClientConfigurationUpdatesDoNotChangeStoredSettings() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth validation probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile", "ontology.read")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        String clientId = mapper.readTree(created.body()).path("clientId").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+
+        csrf = csrfToken();
+        HttpResponse<String> invalidRedirect = putJson("/admin/oauth/clients/" + clientRecordId, csrf,
+                Map.of("displayName", "Changed name", "redirectUri", "http://insecure.example.test/callback",
+                        "scopes", List.of("profile")));
+        assertThat(invalidRedirect.statusCode()).isEqualTo(400);
+
+        csrf = csrfToken();
+        HttpResponse<String> unsupportedScope = putJson("/admin/oauth/clients/" + clientRecordId, csrf,
+                Map.of("displayName", "Changed name", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile", "admin.root")));
+        assertThat(unsupportedScope.statusCode()).isEqualTo(400);
+
+        assertThat(jdbc.queryForObject("SELECT display_name FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo("OAuth validation probe");
+        assertThat(jdbc.queryForObject("SELECT redirect_uri FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo(REDIRECT_URI);
+        assertThat(jdbc.queryForObject("SELECT scopes FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo("ontology.read profile");
+    }
+
+    @Test
+    void authorizationCreationRechecksClientConfigurationAfterWaitingForAdminLock() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth concurrent update probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        String clientId = mapper.readTree(created.body()).path("clientId").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+
+        // 模拟授权请求先读到旧客户端，随后管理员持锁修改回调地址并撤销旧授权。
+        OAuth2Authorization staleAuthorization = staleAuthorization(clientId, REDIRECT_URI, Set.of("profile"));
+        assertConcurrentAuthorizationRejected(staleAuthorization, () -> {
+            clientRepository.updateConfiguration(clientRecordId, "OAuth concurrent update probe",
+                    "https://app.example.test/updated-callback", Set.of("profile"));
+            revokeAndClearClientAuthorizationState();
+        });
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_authorization WHERE id = ?",
+                Long.class, staleAuthorization.getId())).isZero();
+        assertThat(jdbc.queryForObject("SELECT redirect_uri FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo("https://app.example.test/updated-callback");
+    }
+
+    @Test
+    void authorizationCreationRejectsSecretRotationThatWinsClientLock() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth concurrent secret probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        String clientId = mapper.readTree(created.body()).path("clientId").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+        OAuth2Authorization staleAuthorization = staleAuthorization(clientId, REDIRECT_URI, Set.of("profile"));
+        String oldSecretHash = jdbc.queryForObject("SELECT client_secret_hash FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId);
+
+        assertConcurrentAuthorizationRejected(staleAuthorization, () -> {
+            clientRepository.updateSecretHash(clientRecordId, passwordEncoder.encode("rotated-test-only-secret"));
+            revokeAndClearClientAuthorizationState();
+        });
+        String newSecretHash = jdbc.queryForObject("SELECT client_secret_hash FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId);
+        assertThat(newSecretHash).isNotEqualTo(oldSecretHash);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_authorization WHERE id = ?",
+                Long.class, staleAuthorization.getId())).isZero();
+    }
+
+    @Test
+    void reEnablingClientAllowsNewAuthorizationWithoutRestoringOldTokens() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth enable probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        JsonNode clientBody = mapper.readTree(created.body());
+        String clientId = clientBody.path("clientId").asText();
+        String clientSecret = clientBody.path("clientSecret").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+        String originalAccessToken = authorizeAndExchange(client, clientId, clientSecret, "profile");
+        String persistedRequest = jdbc.queryForObject("SELECT authorization_request_json::text "
+                + "FROM ontology.og_app_authorization WHERE client_record_id = ? AND user_id = ?",
+                String.class, clientRecordId, userId);
+        assertThat(persistedRequest)
+                .contains(ClientConfigurationSnapshotAuthenticationConverter.CONFIG_FINGERPRINT_PARAMETER)
+                .doesNotContain(clientSecret);
+
+        csrf = csrfToken();
+        HttpResponse<String> disabled = send(HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId))
+                .header("X-CSRF-TOKEN", csrf).DELETE().build());
+        assertThat(disabled.statusCode()).isEqualTo(200);
+        assertThat(getBearer(originalAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+
+        // 模拟旧版本留下授权记录及同意记录；启用操作必须先清理，不能让历史授权复活。
+        jdbc.update("INSERT INTO ontology.og_app_authorization_consent(client_record_id, user_id, scopes) "
+                        + "VALUES (?, ?, 'profile') ON CONFLICT (client_record_id, user_id) "
+                        + "DO UPDATE SET scopes = EXCLUDED.scopes",
+                clientRecordId, userId);
+        jdbc.update("UPDATE ontology.og_app_authorization SET revoked_at = NULL, access_active = TRUE "
+                        + "WHERE client_record_id = ? AND user_id = ?",
+                clientRecordId, userId);
+
+        csrf = csrfToken();
+        HttpResponse<String> enabled = send(HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId
+                + "/enable")).header("X-CSRF-TOKEN", csrf).POST(HttpRequest.BodyPublishers.noBody()).build());
+        assertThat(enabled.statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT enabled FROM ontology.og_app_client WHERE id = ?",
+                Boolean.class, clientRecordId)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_authorization_consent "
+                + "WHERE client_record_id = ?", Long.class, clientRecordId)).isZero();
+        assertThat(jdbc.queryForObject("SELECT revoked_at IS NOT NULL AND access_active = FALSE "
+                + "FROM ontology.og_app_authorization WHERE client_record_id = ? AND user_id = ?",
+                Boolean.class, clientRecordId, userId)).isTrue();
+        assertThat(getBearer(originalAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+
+        String newAccessToken = authorizeAndExchange(client, clientId, clientSecret, "profile");
+        assertThat(getBearer(newAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_audit_event "
+                + "WHERE event_type = 'APP_CLIENT_ENABLED' AND actor_user_id = ? "
+                + "AND details_json->>'clientId' = ?", Long.class, userId, clientId)).isEqualTo(1L);
+    }
+
+    @Test
+    void secretRotationReturnsOnlyNewSecretAndRevokesExistingGrant() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth secret rotation probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        JsonNode clientBody = mapper.readTree(created.body());
+        String clientId = clientBody.path("clientId").asText();
+        String oldSecret = clientBody.path("clientSecret").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+        String oldAccessToken = authorizeAndExchange(client, clientId, oldSecret, "profile");
+
+        csrf = csrfToken();
+        HttpResponse<String> rotated = send(HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId
+                + "/rotate-secret")).header("X-CSRF-TOKEN", csrf).POST(HttpRequest.BodyPublishers.noBody()).build());
+        assertThat(rotated.statusCode()).isEqualTo(200);
+        assertThat(rotated.headers().firstValue("cache-control").orElse("")).contains("no-store");
+        JsonNode rotatedBody = mapper.readTree(rotated.body());
+        String newSecret = rotatedBody.path("clientSecret").asText();
+        assertThat(newSecret).isNotBlank().isNotEqualTo(oldSecret);
+        String storedHash = jdbc.queryForObject("SELECT client_secret_hash FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId);
+        assertThat(storedHash).isNotEqualTo(newSecret);
+        assertThat(passwordEncoder.matches(oldSecret, storedHash)).isFalse();
+        assertThat(passwordEncoder.matches(newSecret, storedHash)).isTrue();
+        assertThat(getBearer(oldAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+
+        String newAccessToken = authorizeAndExchange(client, clientId, newSecret, "profile");
+        assertThat(getBearer(newAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(200);
+        String details = jdbc.queryForObject("SELECT details_json::text FROM ontology.og_audit_event "
+                + "WHERE event_type = 'APP_CLIENT_SECRET_ROTATED' AND actor_user_id = ? "
+                + "AND details_json->>'clientId' = ?", String.class, userId, clientId);
+        assertThat(details).doesNotContain(oldSecret, newSecret);
+    }
+
+    @Test
+    void nonAdminCannotChangeOAuthClientManagementState() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth authorization boundary probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        String clientId = mapper.readTree(created.body()).path("clientId").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+
+        CookieManager viewerCookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
+        java.net.http.HttpClient viewerClient = java.net.http.HttpClient.newBuilder().cookieHandler(viewerCookies)
+                .followRedirects(java.net.http.HttpClient.Redirect.NEVER).build();
+        String viewerCsrf = csrfToken(viewerClient);
+        HttpResponse<String> viewerLogin = postForm(viewerClient, "/auth/login", viewerCsrf,
+                List.of(Map.entry("username", viewerUsername), Map.entry("password", "test-only-" + viewerUserId)));
+        assertThat(viewerLogin.statusCode()).isEqualTo(200);
+        viewerCsrf = csrfToken(viewerClient);
+        assertThat(putJson(viewerClient, "/admin/oauth/clients/" + clientRecordId, viewerCsrf,
+                Map.of("displayName", "Not allowed", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile"))).statusCode()).isEqualTo(403);
+        assertThat(send(viewerClient, HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId
+                + "/enable")).header("X-CSRF-TOKEN", viewerCsrf)
+                .POST(HttpRequest.BodyPublishers.noBody()).build()).statusCode()).isEqualTo(403);
+        assertThat(send(viewerClient, HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId
+                + "/rotate-secret")).header("X-CSRF-TOKEN", viewerCsrf)
+                .POST(HttpRequest.BodyPublishers.noBody()).build()).statusCode()).isEqualTo(403);
+        assertThat(jdbc.queryForObject("SELECT display_name FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo("OAuth authorization boundary probe");
     }
 
     @Test
@@ -912,6 +1217,83 @@ class AgentOAuthAuthorizationIntegrationTest {
         return mapper.readTree(response.body()).path("token").asText();
     }
 
+    private OAuth2Authorization staleAuthorization(final String clientId, final String redirectUri,
+            final Set<String> scopes) {
+        RegisteredClient staleClient = clientRepository.findById(clientRecordId);
+        assertThat(staleClient).isNotNull();
+        Instant loginAt = Instant.now();
+        LoginUserPrincipal principal = new LoginUserPrincipal(userId, username,
+                "OAuth integration admin", true,
+                jdbc.queryForObject("SELECT auth_version FROM ontology.og_user WHERE id = ?", Long.class, userId),
+                loginAt.toEpochMilli());
+        var authentication = UsernamePasswordAuthenticationToken.authenticated(principal, null,
+                List.of(new SimpleGrantedAuthority("ROLE_SYSTEM_ADMIN")));
+        String fingerprint = clientRepository.authorizationConfigFingerprintByRecordId(clientRecordId);
+        OAuth2AuthorizationRequest staleRequest = OAuth2AuthorizationRequest.authorizationCode()
+                .authorizationUri(PUBLIC_ORIGIN + "api/v1/oidc/app/authorize")
+                .clientId(clientId).redirectUri(redirectUri).scopes(scopes)
+                .state("stale-authorization-" + UUID.randomUUID())
+                .additionalParameters(Map.of(
+                        ClientConfigurationSnapshotAuthenticationConverter.CONFIG_FINGERPRINT_PARAMETER,
+                        fingerprint))
+                .build();
+        return OAuth2Authorization.withRegisteredClient(staleClient)
+                .id(UUID.randomUUID().toString()).principalName(userId)
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .authorizedScopes(scopes)
+                .attribute(java.security.Principal.class.getName(), authentication)
+                .attribute(OpaqueOAuth2TokenGenerator.LOGIN_AT_ATTRIBUTE, loginAt)
+                .attribute(OpaqueOAuth2TokenGenerator.ABSOLUTE_EXPIRY_ATTRIBUTE, loginAt.plus(Duration.ofHours(8)))
+                .attribute(OAuth2AuthorizationRequest.class.getName(), staleRequest)
+                .build();
+    }
+
+    private void assertConcurrentAuthorizationRejected(final OAuth2Authorization staleAuthorization,
+            final Runnable adminMutation) throws Exception {
+        CountDownLatch adminHasLock = new CountDownLatch(1);
+        CountDownLatch allowAdminCommit = new CountDownLatch(1);
+        CountDownLatch authorizationSaveStarted = new CountDownLatch(1);
+        CompletableFuture<Void> adminUpdate = CompletableFuture.runAsync(() ->
+                new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                    assertThat(clientRepository.lockForUpdate(clientRecordId)).isNotNull();
+                    adminHasLock.countDown();
+                    try {
+                        if (!allowAdminCommit.await(5, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException("等待 OAuth 并发测试释放客户端锁超时");
+                        }
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("OAuth 并发测试被中断", interrupted);
+                    }
+                    adminMutation.run();
+                }));
+        assertThat(adminHasLock.await(5, TimeUnit.SECONDS)).isTrue();
+
+        CompletableFuture<Void> staleSave = CompletableFuture.runAsync(() -> {
+            authorizationSaveStarted.countDown();
+            authorizationService.save(staleAuthorization);
+        });
+        try {
+            assertThat(authorizationSaveStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            // 若授权写入没有等待客户端行锁，就会越过配置维护事务并留下过期授权。
+            assertThatThrownBy(() -> staleSave.get(250, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(TimeoutException.class);
+        } finally {
+            allowAdminCommit.countDown();
+        }
+        adminUpdate.get(5, TimeUnit.SECONDS);
+        assertThatThrownBy(() -> staleSave.get(5, TimeUnit.SECONDS))
+                .isInstanceOf(ExecutionException.class)
+                .hasCauseInstanceOf(org.springframework.security.oauth2.core.OAuth2AuthorizationException.class);
+    }
+
+    private void revokeAndClearClientAuthorizationState() {
+        jdbc.update("UPDATE ontology.og_app_authorization SET revoked_at = NOW(), access_active = FALSE, "
+                        + "consent_state_digest = NULL, consent_state_expires_at = NULL "
+                        + "WHERE client_record_id = ?", clientRecordId);
+        jdbc.update("DELETE FROM ontology.og_app_authorization_consent WHERE client_record_id = ?", clientRecordId);
+    }
+
     private String csrfToken(final java.net.http.HttpClient sessionClient) throws Exception {
         HttpResponse<String> response = get(sessionClient, "/auth/csrf");
         assertThat(response.statusCode()).isEqualTo(200);
@@ -947,7 +1329,10 @@ class AgentOAuthAuthorizationIntegrationTest {
         for (String scope : scopes.split("\\s+")) approval.add(Map.entry("scope", scope));
         HttpResponse<String> approved = postForm(sessionClient, "/oidc/app/authorize", csrf, approval);
         assertThat(approved.statusCode()).isBetween(300, 399);
-        String code = queryParameters(resolveLocation(approved).getRawQuery()).get("code");
+        Map<String, String> callbackParameters = queryParameters(resolveLocation(approved).getRawQuery());
+        assertThat(callbackParameters)
+                .doesNotContainKey(ClientConfigurationSnapshotAuthenticationConverter.CONFIG_FINGERPRINT_PARAMETER);
+        String code = callbackParameters.get("code");
         assertThat(code).isNotBlank();
         HttpResponse<String> tokens = postForm("/oidc/app/token", null,
                 List.of(Map.entry("grant_type", "authorization_code"), Map.entry("client_id", clientId),
@@ -1001,9 +1386,26 @@ class AgentOAuthAuthorizationIntegrationTest {
 
     private HttpResponse<String> postJson(final String path, final String csrf, final Object body)
             throws IOException, InterruptedException {
-        return send(HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
+        return postJson(client, path, csrf, body);
+    }
+
+    private HttpResponse<String> postJson(final java.net.http.HttpClient sessionClient, final String path,
+            final String csrf, final Object body) throws IOException, InterruptedException {
+        return send(sessionClient, HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
                 .header("X-CSRF-TOKEN", csrf)
                 .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build());
+    }
+
+    private HttpResponse<String> putJson(final String path, final String csrf, final Object body)
+            throws IOException, InterruptedException {
+        return putJson(client, path, csrf, body);
+    }
+
+    private HttpResponse<String> putJson(final java.net.http.HttpClient sessionClient, final String path,
+            final String csrf, final Object body) throws IOException, InterruptedException {
+        return send(sessionClient, HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
+                .header("X-CSRF-TOKEN", csrf)
+                .PUT(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build());
     }
 
     private HttpResponse<String> send(final HttpRequest request) throws IOException, InterruptedException {

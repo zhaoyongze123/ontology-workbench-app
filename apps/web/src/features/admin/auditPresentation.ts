@@ -16,6 +16,9 @@ const EVENTS: Record<string, EventPresentation> = {
   USER_SESSIONS_REVOKED: { label: '撤销账号会话和 App 授权', result: '成功' },
   APP_CLIENT_CREATED: { label: '注册 OAuth 客户端', result: '成功' },
   APP_CLIENT_DISABLED: { label: '停用 OAuth 客户端', result: '成功' },
+  APP_CLIENT_ENABLED: { label: '启用 OAuth 客户端', result: '成功' },
+  APP_CLIENT_UPDATED: { label: '更新 OAuth 客户端配置', result: '成功' },
+  APP_CLIENT_SECRET_ROTATED: { label: '轮换 OAuth 客户端 Secret', result: '成功' },
   WORKBENCH_OIDC_LOGIN: { label: 'Workbench 账号登录', result: '成功' },
   WORKBENCH_OIDC_USER_CREATED: {
     label: '创建 Workbench 身份绑定',

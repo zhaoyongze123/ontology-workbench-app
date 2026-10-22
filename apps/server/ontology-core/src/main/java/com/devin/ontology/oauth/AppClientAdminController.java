@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -35,9 +36,28 @@ public class AppClientAdminController {
                 .body(service.create(request));
     }
 
+    @PutMapping("/{clientRecordId}")
+    public AgentClientRepository.AppClientView update(@PathVariable final String clientRecordId,
+            @RequestBody final AppClientManagementService.UpdateClientRequest request) {
+        return service.update(clientRecordId, request);
+    }
+
     @DeleteMapping("/{clientRecordId}")
     public java.util.Map<String, String> disable(@PathVariable final String clientRecordId) {
         service.disable(clientRecordId);
         return java.util.Map.of("status", "disabled");
+    }
+
+    @PostMapping("/{clientRecordId}/enable")
+    public java.util.Map<String, String> enable(@PathVariable final String clientRecordId) {
+        service.enable(clientRecordId);
+        return java.util.Map.of("status", "enabled");
+    }
+
+    @PostMapping("/{clientRecordId}/rotate-secret")
+    public ResponseEntity<AppClientManagementService.RotatedClientSecret> rotateSecret(
+            @PathVariable final String clientRecordId) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).header("Pragma", "no-cache")
+                .body(service.rotateSecret(clientRecordId));
     }
 }

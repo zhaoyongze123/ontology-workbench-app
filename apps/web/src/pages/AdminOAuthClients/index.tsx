@@ -5,17 +5,22 @@ import {
   ADMIN_TIME_ZONE_LABEL,
   formatAdminDateTime,
 } from '@/features/admin/dateTime';
-import {
-  OAUTH_SCOPE_OPTIONS as SCOPE_OPTIONS,
-  oauthScopeLabel,
-} from '@/features/admin/oauthScopePresentation';
+import OAuthClientConfigFields, {
+  type OAuthClientConfigurationFields,
+} from '@/features/admin/OAuthClientConfigFields';
+import { oauthScopeLabel } from '@/features/admin/oauthScopePresentation';
 import OneTimeValuesModal from '@/features/admin/OneTimeValuesModal';
 import {
   createOAuthClient,
   disableOAuthClient,
+  enableOAuthClient,
   getOAuthClients,
+  rotateOAuthClientSecret,
+  updateOAuthClient,
   type AppClient,
+  type AppClientConfiguration,
   type CreatedAppClient,
+  type RotatedAppClientSecret,
 } from '@/features/admin/service';
 import { useAdminRequestError } from '@/features/admin/useAdminRequestError';
 import { useCurrentUser } from '@/features/auth/context';
@@ -26,8 +31,8 @@ import {
   Alert,
   App,
   Button,
-  Checkbox,
   Descriptions,
+  Divider,
   Drawer,
   Form,
   Input,
@@ -42,11 +47,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-type CreateClientFields = {
-  displayName: string;
-  redirectUri: string;
-  scopes: string[];
-};
+type CreateClientFields = OAuthClientConfigurationFields;
 
 type PendingCreateOutcome = {
   values: CreateClientFields;
@@ -82,6 +83,11 @@ const AdminOAuthClientsPage: React.FC = () => {
   const { message } = App.useApp();
   const resolveFailure = useAdminRequestError();
   const [createForm] = Form.useForm<CreateClientFields>();
+  const [editForm] = Form.useForm<OAuthClientConfigurationFields>();
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const [tableWidth, setTableWidth] = useState(0);
+  // 按管理页主内容的实际宽度切换列，避免 iframe 外壳和侧栏宽度造成误判。
+  const compactLayout = tableWidth === 0 || tableWidth < 1080;
   const [items, setItems] = useState<AppClient[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -92,6 +98,8 @@ const AdminOAuthClientsPage: React.FC = () => {
     type: 'warning' | 'success';
     message: string;
     client?: AppClient;
+    actionLabel?: string;
+    action?: 'view' | 'retry-secret-rotation';
   }>();
   const requestSequence = useRef(0);
   const [createOpen, setCreateOpen] = useState(false);
@@ -102,11 +110,27 @@ const AdminOAuthClientsPage: React.FC = () => {
   const [createOutcomeChecked, setCreateOutcomeChecked] = useState(false);
   const [createError, setCreateError] = useState('');
   const [created, setCreated] = useState<CreatedAppClient>();
+  const [rotatedSecret, setRotatedSecret] = useState<RotatedAppClientSecret>();
   const [selectedClient, setSelectedClient] = useState<AppClient>();
-  const [disableTarget, setDisableTarget] = useState<AppClient>();
-  const [disableError, setDisableError] = useState('');
-  const [disableOutcomeUnknown, setDisableOutcomeUnknown] = useState(false);
-  const [checkingDisableOutcome, setCheckingDisableOutcome] = useState(false);
+  const [editingClient, setEditingClient] = useState<AppClient>();
+  const [editError, setEditError] = useState('');
+  const [editOutcomeUnknown, setEditOutcomeUnknown] = useState<{
+    clientId: string;
+    values: OAuthClientConfigurationFields;
+  }>();
+  const [editOutcomeChecked, setEditOutcomeChecked] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [statusTarget, setStatusTarget] = useState<{
+    client: AppClient;
+    enabled: boolean;
+  }>();
+  const [statusError, setStatusError] = useState('');
+  const [statusOutcomeUnknown, setStatusOutcomeUnknown] = useState(false);
+  const [checkingStatusOutcome, setCheckingStatusOutcome] = useState(false);
+  const [rotateTarget, setRotateTarget] = useState<AppClient>();
+  const [rotateError, setRotateError] = useState('');
+  const [rotateOutcomeUnknown, setRotateOutcomeUnknown] = useState(false);
+  const [rotatingSecret, setRotatingSecret] = useState(false);
   const [busyClientId, setBusyClientId] = useState<string>();
   const [copyError, setCopyError] = useState('');
 
@@ -121,6 +145,11 @@ const AdminOAuthClientsPage: React.FC = () => {
       }
       if (sequence !== requestSequence.current) return;
       setItems(result || []);
+      setSelectedClient((current) =>
+        current
+          ? result?.find((client) => client.id === current.id) || current
+          : undefined,
+      );
       setHasLoaded(true);
       return result || [];
     } catch (error) {
@@ -138,6 +167,7 @@ const AdminOAuthClientsPage: React.FC = () => {
       if (sequence === requestSequence.current) setLoading(false);
     }
   };
+  const showTable = loading || items.length > 0 || (hasLoaded && !loadError);
 
   useEffect(() => {
     if (actor.systemAdmin) void load();
@@ -145,6 +175,17 @@ const AdminOAuthClientsPage: React.FC = () => {
       requestSequence.current += 1;
     };
   }, [actor.systemAdmin]);
+
+  useEffect(() => {
+    const container = tableContainerRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width !== undefined) setTableWidth(width);
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [showTable]);
 
   const orderedItems = useMemo(
     () =>
@@ -175,6 +216,23 @@ const AdminOAuthClientsPage: React.FC = () => {
   const reportCopySuccess = (text: string) => {
     setCopyError('');
     message.success(text);
+  };
+  const openNoticeClient = async () => {
+    if (!writeNotice?.client) return;
+    const target = writeNotice.client;
+    const refreshed = await load();
+    const current =
+      refreshed?.find((client) => client.id === target.id) || target;
+    if (writeNotice.action === 'retry-secret-rotation') {
+      setRotateTarget(current);
+      setRotateOutcomeUnknown(true);
+      setRotateError(
+        '上次轮换结果仍未确认，旧 Secret 可能已失效。请确认是否再次轮换并保存新值。',
+      );
+    } else {
+      setSelectedClient(current);
+    }
+    setWriteNotice(undefined);
   };
   const copyInDrawer = async (value: string, label: string) => {
     setCopyError('');
@@ -233,32 +291,103 @@ const AdminOAuthClientsPage: React.FC = () => {
     }
   };
 
-  const verifyDisableOutcome = async () => {
-    if (!disableTarget) return;
-    const target = disableTarget;
-    setCheckingDisableOutcome(true);
+  const verifyEditOutcome = async () => {
+    if (!editOutcomeUnknown) return;
+    const { clientId, values } = editOutcomeUnknown;
+    const refreshed = await load();
+    const current = refreshed?.find((client) => client.id === clientId);
+    if (!current) {
+      setEditError(
+        '已刷新列表，但未找到该客户端；操作结果仍未确认，请先刷新并定位客户端。',
+      );
+      return;
+    }
+    const matchesAttempt =
+      current.displayName === values.displayName.trim() &&
+      current.redirectUri === values.redirectUri &&
+      current.scopes.slice().sort().join(' ') ===
+        values.scopes.slice().sort().join(' ');
+    if (matchesAttempt) {
+      setEditOutcomeUnknown(undefined);
+      setEditingClient(undefined);
+      setEditError('');
+      message.success('重新读取已确认配置已保存。');
+      return;
+    }
+    const matchesOriginal =
+      current.displayName === editingClient?.displayName &&
+      current.redirectUri === editingClient?.redirectUri &&
+      current.scopes.slice().sort().join(' ') ===
+        editingClient?.scopes.slice().sort().join(' ');
+    if (matchesOriginal) {
+      setEditOutcomeChecked(true);
+      setEditError(
+        '已重新读取并确认配置仍为原值。没有自动重试；确认列表已更新后，可由你明确选择再次保存。',
+      );
+      return;
+    }
+    setEditOutcomeUnknown(undefined);
+    setEditingClient(current);
+    // 不确定结果与旧值、提交值均不一致时，表单必须回填最新服务端事实。
+    editForm.setFieldsValue({
+      displayName: current.displayName,
+      redirectUri: current.redirectUri,
+      scopes: current.scopes,
+    });
+    setEditError(
+      '重新读取发现配置与本次提交和原值均不相同。表单已更新为服务端当前配置，请核对后再编辑；系统没有自动重试。',
+    );
+  };
+
+  const saveClientConfiguration = async (
+    values: OAuthClientConfigurationFields,
+  ) => {
+    if (!editingClient) return;
+    const target = editingClient;
+    const normalized: AppClientConfiguration = {
+      displayName: values.displayName.trim(),
+      redirectUri: values.redirectUri.trim(),
+      scopes: values.scopes,
+    };
+    setSavingEdit(true);
+    setEditError('');
     try {
-      const refreshed = await load();
-      const current = refreshed?.find((client) => client.id === target.id);
-      if (current && !current.enabled) {
-        setDisableOutcomeUnknown(false);
-        setDisableTarget(undefined);
-        setDisableError('');
-        message.success('重新读取已确认客户端处于停用状态。');
-      } else if (current?.enabled) {
-        setDisableOutcomeUnknown(false);
-        setDisableTarget(current);
-        setDisableError(
-          '重新读取已确认客户端仍处于启用状态；没有自动重试。若仍需停用，请再次明确点击“停用客户端”。',
+      const updated = await updateOAuthClient(target.id, normalized);
+      setItems((current) =>
+        current.map((item) => (item.id === target.id ? updated : item)),
+      );
+      setSelectedClient(updated);
+      setEditingClient(undefined);
+      setEditOutcomeUnknown(undefined);
+      setEditOutcomeChecked(false);
+      message.success(
+        normalized.redirectUri !== target.redirectUri ||
+          normalized.scopes.slice().sort().join(' ') !==
+            target.scopes.slice().sort().join(' ')
+          ? '客户端配置已更新；原有授权已撤销，用户需要重新授权。'
+          : '客户端配置已更新。',
+      );
+    } catch (error) {
+      const normalizedError = normalizeApiError(error);
+      if (normalizedError.status === 401) {
+        resolveFailure(error);
+        setEditingClient(undefined);
+      } else if (normalizedError.status === 403) {
+        setItems([]);
+        setSelectedClient(undefined);
+        setEditingClient(undefined);
+        setLoadError(normalizedError.message);
+      } else if (normalizedError.writeOutcomeUnknown) {
+        setEditOutcomeUnknown({ clientId: target.id, values: normalized });
+        setEditOutcomeChecked(false);
+        setEditError(
+          `${normalizedError.message} 请先刷新并核对客户端配置；系统不会自动重试。`,
         );
-      } else if (refreshed) {
-        setDisableOutcomeUnknown(true);
-        setDisableError(
-          '已重新读取客户端列表，但未找到目标记录；操作结果仍未确认，请先刷新并定位该客户端。',
-        );
+      } else {
+        setEditError(applyAdminFormError(error, editForm));
       }
     } finally {
-      setCheckingDisableOutcome(false);
+      setSavingEdit(false);
     }
   };
 
@@ -313,37 +442,44 @@ const AdminOAuthClientsPage: React.FC = () => {
     }
   };
 
-  const disableClient = async () => {
-    if (!disableTarget) return;
-    const target = disableTarget;
+  const changeClientStatus = async () => {
+    if (!statusTarget) return;
+    const { client: target, enabled } = statusTarget;
     setBusyClientId(target.id);
-    setDisableError('');
-    setDisableOutcomeUnknown(false);
+    setStatusError('');
+    setStatusOutcomeUnknown(false);
     try {
-      await disableOAuthClient(target.id);
+      if (enabled) await enableOAuthClient(target.id);
+      else await disableOAuthClient(target.id);
       setItems((current) =>
         current.map((item) =>
-          item.id === target.id ? { ...item, enabled: false } : item,
+          item.id === target.id ? { ...item, enabled } : item,
         ),
       );
       setSelectedClient((current) =>
-        current?.id === target.id ? { ...current, enabled: false } : current,
+        current?.id === target.id ? { ...current, enabled } : current,
       );
-      setDisableTarget(undefined);
-      message.success('客户端已停用，现有 App 授权已撤销。');
+      setStatusTarget(undefined);
+      message.success(
+        enabled
+          ? '客户端已启用；原有授权不会恢复，用户需要重新授权。'
+          : '客户端已停用，现有 App 授权已撤销。',
+      );
     } catch (error) {
       const failure = resolveFailure(error);
       if (failure.accessLost) {
         setItems([]);
         setSelectedClient(undefined);
+        setStatusTarget(undefined);
+        setStatusOutcomeUnknown(false);
       }
       if (failure.redirectedToLogin) {
-        setDisableTarget(undefined);
+        setStatusTarget(undefined);
       } else {
-        setDisableError(failure.message);
+        setStatusError(failure.message);
         if (normalizeApiError(error).writeOutcomeUnknown) {
-          setDisableOutcomeUnknown(true);
-          setDisableError(
+          setStatusOutcomeUnknown(true);
+          setStatusError(
             `${failure.message} 请重新读取客户端状态；系统不会自动重试。`,
           );
         }
@@ -353,57 +489,148 @@ const AdminOAuthClientsPage: React.FC = () => {
     }
   };
 
+  const verifyStatusOutcome = async () => {
+    if (!statusTarget) return;
+    const target = statusTarget;
+    setCheckingStatusOutcome(true);
+    try {
+      const refreshed = await load();
+      const current = refreshed?.find(
+        (client) => client.id === target.client.id,
+      );
+      if (current && current.enabled === target.enabled) {
+        setStatusOutcomeUnknown(false);
+        setStatusTarget(undefined);
+        setStatusError('');
+        message.success('重新读取已确认客户端状态已更新。');
+      } else if (current) {
+        setStatusOutcomeUnknown(false);
+        setStatusTarget({ ...target, client: current });
+        setStatusError(
+          `重新读取已确认客户端仍处于${
+            current.enabled ? '启用' : '停用'
+          }状态；没有自动重试。若仍需${
+            target.enabled ? '启用' : '停用'
+          }，请再次明确点击按钮。`,
+        );
+      } else if (refreshed) {
+        setStatusOutcomeUnknown(true);
+        setStatusError(
+          '已重新读取客户端列表，但未找到目标记录；操作结果仍未确认，请先刷新并定位该客户端。',
+        );
+      }
+    } finally {
+      setCheckingStatusOutcome(false);
+    }
+  };
+
+  const rotateSecret = async () => {
+    if (!rotateTarget) return;
+    const target = rotateTarget;
+    setRotatingSecret(true);
+    setRotateError('');
+    try {
+      const result = await rotateOAuthClientSecret(target.id);
+      setRotatedSecret(result);
+      setRotateTarget(undefined);
+      setRotateOutcomeUnknown(false);
+      message.success('已生成新 Secret。请先保存，再关闭此窗口。');
+      void load();
+    } catch (error) {
+      const failure = resolveFailure(error);
+      if (failure.redirectedToLogin || failure.accessLost) {
+        setRotateTarget(undefined);
+        setRotateOutcomeUnknown(false);
+      } else {
+        setRotateError(
+          normalizeApiError(error).writeOutcomeUnknown
+            ? `${failure.message} 旧 Secret 可能已经失效；系统不会自动重试。若需恢复，请再次明确确认轮换并立即保存新值。`
+            : failure.message,
+        );
+        setRotateOutcomeUnknown(normalizeApiError(error).writeOutcomeUnknown);
+      }
+    } finally {
+      setRotatingSecret(false);
+    }
+  };
+
   const columns: ColumnsType<AppClient> = [
     {
       title: '应用',
       dataIndex: 'displayName',
-      width: 200,
+      width: compactLayout ? '55%' : '18%',
       render: (value: string) => (
         <Typography.Text strong ellipsis>
           {value}
         </Typography.Text>
       ),
     },
-    {
-      title: 'Client ID',
-      dataIndex: 'clientId',
-      width: 260,
-      render: (value: string) => (
-        <CopyableValue
-          value={value}
-          label="Client ID"
-          onCopyError={reportCopyError}
-          onCopySuccess={reportCopySuccess}
-        />
-      ),
-    },
-    {
-      title: '回调地址',
-      dataIndex: 'redirectUri',
-      width: 260,
-      ellipsis: true,
-      render: (value: string) => (
-        <Tooltip title="完整地址可在客户端详情中查看和复制" placement="topLeft">
-          <Typography.Text ellipsis>{value}</Typography.Text>
-        </Tooltip>
-      ),
-    },
-    {
-      title: '允许申请的权限',
-      dataIndex: 'scopes',
-      width: 250,
-      render: (scopes: string[]) => (
-        <Space wrap size={[4, 4]}>
-          {scopes.map((scope) => {
-            return <Tag key={scope}>{oauthScopeLabel(scope)}</Tag>;
-          })}
-        </Space>
-      ),
-    },
+    ...(!compactLayout
+      ? [
+          {
+            title: 'Client ID',
+            dataIndex: 'clientId',
+            width: '20%',
+            render: (value: string) => (
+              <CopyableValue
+                value={value}
+                label="Client ID"
+                onCopyError={reportCopyError}
+                onCopySuccess={reportCopySuccess}
+              />
+            ),
+          },
+          {
+            title: '回调地址',
+            dataIndex: 'redirectUri',
+            width: '23%',
+            render: (value: string) => (
+              <CopyableValue
+                value={value}
+                label="回调地址"
+                onCopyError={reportCopyError}
+                onCopySuccess={reportCopySuccess}
+              />
+            ),
+          },
+          {
+            title: '允许申请的权限',
+            dataIndex: 'scopes',
+            width: '15%',
+            render: (scopes: string[]) => {
+              const visible = scopes.slice(0, 2);
+              const remaining = scopes.slice(2);
+              return (
+                <Space wrap size={[4, 4]}>
+                  {visible.map((scope) => (
+                    <Tag key={scope}>{oauthScopeLabel(scope)}</Tag>
+                  ))}
+                  {remaining.length ? (
+                    <Tooltip
+                      title={remaining.map(oauthScopeLabel).join('、')}
+                      placement="topLeft"
+                    >
+                      <Button
+                        type="text"
+                        size="small"
+                        aria-label={`查看其他权限：${remaining
+                          .map(oauthScopeLabel)
+                          .join('、')}`}
+                      >
+                        +{remaining.length}
+                      </Button>
+                    </Tooltip>
+                  ) : null}
+                </Space>
+              );
+            },
+          },
+        ]
+      : []),
     {
       title: '状态',
       dataIndex: 'enabled',
-      width: 110,
+      width: compactLayout ? '20%' : '8%',
       render: (enabled: boolean) => (
         <Tag color={enabled ? 'green' : 'default'}>
           {enabled ? '已启用' : '已停用'}
@@ -413,30 +640,33 @@ const AdminOAuthClientsPage: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      width: compactLayout ? '25%' : '16%',
       render: (_, client) => (
-        <Space>
+        <Space size={compactLayout ? 0 : 8}>
           <Button
             type="link"
+            size={compactLayout ? 'small' : 'middle'}
             onClick={() => {
               setCopyError('');
               setSelectedClient(client);
             }}
           >
-            查看详情
+            {compactLayout ? '查看' : '查看详情'}
           </Button>
-          {client.enabled ? (
+          {!compactLayout ? (
             <Button
               type="link"
-              danger
+              danger={client.enabled}
+              size="small"
               loading={busyClientId === client.id}
               disabled={Boolean(busyClientId)}
               onClick={() => {
-                setDisableError('');
-                setDisableTarget(client);
+                setStatusError('');
+                setStatusOutcomeUnknown(false);
+                setStatusTarget({ client, enabled: !client.enabled });
               }}
             >
-              停用客户端
+              {client.enabled ? '停用' : '启用'}
             </Button>
           ) : null}
         </Space>
@@ -444,7 +674,6 @@ const AdminOAuthClientsPage: React.FC = () => {
     },
   ];
 
-  const showTable = loading || items.length > 0 || (hasLoaded && !loadError);
   const detail = selectedClient;
 
   return (
@@ -489,8 +718,8 @@ const AdminOAuthClientsPage: React.FC = () => {
           message={writeNotice.message}
           action={
             writeNotice.client ? (
-              <Button onClick={() => setSelectedClient(writeNotice.client)}>
-                查看疑似客户端
+              <Button onClick={() => void openNoticeClient()}>
+                {writeNotice.actionLabel || '查看疑似客户端'}
               </Button>
             ) : undefined
           }
@@ -507,17 +736,19 @@ const AdminOAuthClientsPage: React.FC = () => {
         />
       ) : null}
       {showTable ? (
-        <Table<AppClient>
-          rowKey="id"
-          columns={columns}
-          dataSource={pageRows}
-          loading={loading}
-          locale={{
-            emptyText: loadError ? '列表读取失败' : '暂无 OAuth 客户端',
-          }}
-          scroll={{ x: 1240 }}
-          pagination={false}
-        />
+        <div ref={tableContainerRef} style={{ width: '100%', minWidth: 0 }}>
+          <Table<AppClient>
+            rowKey="id"
+            columns={columns}
+            dataSource={pageRows}
+            loading={loading}
+            tableLayout="fixed"
+            locale={{
+              emptyText: loadError ? '列表读取失败' : '暂无 OAuth 客户端',
+            }}
+            pagination={false}
+          />
+        </div>
       ) : null}
       <ListPagination
         current={currentPage}
@@ -550,84 +781,7 @@ const AdminOAuthClientsPage: React.FC = () => {
           onFinish={saveCreatedClient}
           preserve
         >
-          <Form.Item
-            name="displayName"
-            label="应用名称"
-            rules={[
-              { required: true, whitespace: true, message: '请输入应用名称。' },
-            ]}
-          >
-            <Input maxLength={160} />
-          </Form.Item>
-          <Form.Item
-            name="redirectUri"
-            label="HTTPS 回调地址"
-            extra="必须是完整 HTTPS 地址，不能包含凭据或 URL 片段。"
-            rules={[
-              { required: true, message: '请输入回调地址。' },
-              {
-                validator: async (_, value: string) => {
-                  if (!value) return Promise.resolve();
-                  try {
-                    const uri = new URL(value);
-                    if (
-                      uri.protocol !== 'https:' ||
-                      !uri.hostname ||
-                      uri.username ||
-                      uri.password ||
-                      uri.hash ||
-                      value.length > 2048 ||
-                      value.includes('*') ||
-                      /\s/.test(value)
-                    ) {
-                      throw new Error('invalid redirect URI');
-                    }
-                    return Promise.resolve();
-                  } catch {
-                    return Promise.reject(
-                      new Error(
-                        '请输入有效 HTTPS 地址；不允许通配符、凭据或 URL 片段。',
-                      ),
-                    );
-                  }
-                },
-              },
-            ]}
-          >
-            <Input
-              maxLength={2048}
-              placeholder="https://app.example.com/oauth/callback"
-              autoComplete="url"
-            />
-          </Form.Item>
-          <Form.Item
-            name="scopes"
-            label="允许申请的权限"
-            extra="至少包含基本身份 profile。"
-            rules={[
-              {
-                validator: async (_, values: string[]) =>
-                  values?.includes('profile')
-                    ? Promise.resolve()
-                    : Promise.reject(
-                        new Error('至少选择基本身份（profile）。'),
-                      ),
-              },
-            ]}
-          >
-            <Checkbox.Group style={{ display: 'grid', gap: 8 }}>
-              {SCOPE_OPTIONS.map((scope) => (
-                <Checkbox key={scope.value} value={scope.value}>
-                  <Space size={6} wrap>
-                    <span>{scope.label}</span>
-                    <Typography.Text type="secondary" code>
-                      {scope.description}
-                    </Typography.Text>
-                  </Space>
-                </Checkbox>
-              ))}
-            </Checkbox.Group>
-          </Form.Item>
+          <OAuthClientConfigFields />
           <Typography.Paragraph type="secondary">
             客户端使用授权码 + PKCE。Client Secret 只在创建完成时显示一次。
           </Typography.Paragraph>
@@ -691,56 +845,210 @@ const AdminOAuthClientsPage: React.FC = () => {
       </Modal>
 
       <Modal
-        title="停用客户端"
-        open={Boolean(disableTarget)}
+        title="编辑 OAuth 客户端配置"
+        open={Boolean(editingClient)}
         onCancel={() => {
-          if (!busyClientId) {
-            setDisableTarget(undefined);
-            setDisableError('');
-            setDisableOutcomeUnknown(false);
+          if (!savingEdit) {
+            if (editOutcomeUnknown && editingClient) {
+              setWriteNotice({
+                type: 'warning',
+                client: editingClient,
+                actionLabel: '核对客户端配置',
+                message: `「${editingClient.displayName}」的保存结果仍未确认。请重新读取配置后再决定是否继续，不要直接重复提交。`,
+              });
+            }
+            setEditingClient(undefined);
+            setEditOutcomeUnknown(undefined);
+            setEditError('');
+            setEditOutcomeChecked(false);
           }
         }}
-        onOk={() => void disableClient()}
-        okText="停用客户端"
+        onOk={() => editForm.submit()}
+        okText="保存配置"
         cancelText="取消"
         okButtonProps={{
-          danger: true,
-          disabled: !disableTarget || busyClientId === disableTarget?.id,
+          disabled: Boolean(editOutcomeUnknown),
+        }}
+        confirmLoading={savingEdit}
+        closable={!savingEdit}
+        keyboard={!savingEdit}
+        maskClosable={!savingEdit}
+        width="min(560px, calc(100vw - 24px))"
+        destroyOnClose
+      >
+        {editingClient ? (
+          <>
+            <Typography.Paragraph type="secondary">
+              Client ID
+              保持不变。修改回调地址或权限后，现有用户授权会被撤销并需要重新授权。
+            </Typography.Paragraph>
+            <Form
+              form={editForm}
+              layout="vertical"
+              onFinish={saveClientConfiguration}
+              disabled={Boolean(editOutcomeUnknown)}
+            >
+              <OAuthClientConfigFields />
+            </Form>
+            {editError ? (
+              <Alert
+                role="alert"
+                style={{ marginTop: 12 }}
+                type="error"
+                showIcon
+                message={editError}
+                action={
+                  editOutcomeUnknown ? (
+                    <Space wrap>
+                      <Button
+                        disabled={loading || savingEdit}
+                        onClick={() => void verifyEditOutcome()}
+                      >
+                        刷新并核对配置
+                      </Button>
+                      {editOutcomeChecked ? (
+                        <Button
+                          onClick={() => {
+                            setEditOutcomeUnknown(undefined);
+                            setEditOutcomeChecked(false);
+                            setEditError('');
+                          }}
+                        >
+                          我已核对，仍要保存
+                        </Button>
+                      ) : null}
+                    </Space>
+                  ) : undefined
+                }
+              />
+            ) : null}
+          </>
+        ) : null}
+      </Modal>
+
+      <Modal
+        title={statusTarget?.enabled ? '启用客户端' : '停用客户端'}
+        open={Boolean(statusTarget)}
+        onCancel={() => {
+          if (!busyClientId) {
+            if (statusOutcomeUnknown && statusTarget) {
+              setWriteNotice({
+                type: 'warning',
+                client: statusTarget.client,
+                actionLabel: '核对客户端状态',
+                message: `「${statusTarget.client.displayName}」的${
+                  statusTarget.enabled ? '启用' : '停用'
+                }结果仍未确认。请重新读取状态后再决定下一步，不要直接重复提交。`,
+              });
+            }
+            setStatusTarget(undefined);
+            setStatusError('');
+            setStatusOutcomeUnknown(false);
+          }
+        }}
+        onOk={() => void changeClientStatus()}
+        okText={statusTarget?.enabled ? '确认启用' : '停用客户端'}
+        cancelText="取消"
+        okButtonProps={{
+          danger: !statusTarget?.enabled,
+          disabled:
+            !statusTarget ||
+            statusOutcomeUnknown ||
+            busyClientId === statusTarget?.client.id,
         }}
         confirmLoading={Boolean(
-          disableTarget && busyClientId === disableTarget.id,
+          statusTarget && busyClientId === statusTarget.client.id,
         )}
         closable={!busyClientId}
         keyboard={!busyClientId}
         maskClosable={!busyClientId}
         destroyOnClose
       >
-        {disableTarget ? (
+        {statusTarget ? (
           <>
             <Typography.Paragraph>
-              确定停用{' '}
+              确定{statusTarget.enabled ? '启用' : '停用'}{' '}
               <Typography.Text strong>
-                {disableTarget.displayName}
+                {statusTarget.client.displayName}
               </Typography.Text>{' '}
-              吗？此操作会撤销该客户端当前所有用户授权。
+              吗？
+              {statusTarget.enabled
+                ? '重新启用只允许新的授权流程，不会恢复已撤销的用户授权。'
+                : '此操作会撤销该客户端当前所有用户授权，用户需要在恢复服务后重新授权。'}
             </Typography.Paragraph>
-            {disableError ? (
+            {statusError ? (
               <Alert
                 role="alert"
                 type="error"
                 showIcon
                 message="客户端状态需要核对"
-                description={disableError}
+                description={statusError}
                 action={
-                  disableOutcomeUnknown ? (
+                  statusOutcomeUnknown ? (
                     <Button
-                      disabled={checkingDisableOutcome || loading}
-                      onClick={() => void verifyDisableOutcome()}
+                      disabled={checkingStatusOutcome || loading}
+                      onClick={() => void verifyStatusOutcome()}
                     >
-                      {checkingDisableOutcome ? '正在核对' : '重新读取状态'}
+                      {checkingStatusOutcome ? '正在核对' : '重新读取状态'}
                     </Button>
                   ) : undefined
                 }
+              />
+            ) : null}
+          </>
+        ) : null}
+      </Modal>
+
+      <Modal
+        title="轮换 Client Secret"
+        open={Boolean(rotateTarget)}
+        onCancel={() => {
+          if (!rotatingSecret) {
+            if (rotateOutcomeUnknown && rotateTarget) {
+              setWriteNotice({
+                type: 'warning',
+                client: rotateTarget,
+                actionLabel: '重新轮换 Secret',
+                action: 'retry-secret-rotation',
+                message: `「${rotateTarget.displayName}」的 Secret 轮换结果仍未确认，旧 Secret 可能已失效。若要继续，请再次明确轮换并保存新值。`,
+              });
+            }
+            setRotateTarget(undefined);
+            setRotateError('');
+            setRotateOutcomeUnknown(false);
+          }
+        }}
+        onOk={() => void rotateSecret()}
+        okText={rotateOutcomeUnknown ? '再次轮换并生成新 Secret' : '确认轮换'}
+        cancelText="取消"
+        okButtonProps={{ danger: true, disabled: rotatingSecret }}
+        confirmLoading={rotatingSecret}
+        closable={!rotatingSecret}
+        keyboard={!rotatingSecret}
+        maskClosable={!rotatingSecret}
+        destroyOnClose
+      >
+        {rotateTarget ? (
+          <>
+            <Typography.Paragraph>
+              为「{rotateTarget.displayName}」生成新 Secret。旧 Secret
+              会立即失效，现有授权会被撤销；新值只显示一次，请准备好后再继续。
+            </Typography.Paragraph>
+            {rotateOutcomeUnknown ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="上次轮换结果未确认"
+                description="旧 Secret 可能已经失效。再次轮换会让上一次可能生成的新 Secret 也失效，并重新撤销授权。"
+              />
+            ) : null}
+            {rotateError ? (
+              <Alert
+                role="alert"
+                style={{ marginTop: 12 }}
+                type="error"
+                showIcon
+                message={rotateError}
               />
             ) : null}
           </>
@@ -838,13 +1146,57 @@ const AdminOAuthClientsPage: React.FC = () => {
                 {formatAdminDateTime(detail.createdAt)}
               </Descriptions.Item>
             </Descriptions>
+            <Divider />
+            <Space wrap>
+              <Button
+                type="primary"
+                onClick={() => {
+                  editForm.setFieldsValue({
+                    displayName: detail.displayName,
+                    redirectUri: detail.redirectUri,
+                    scopes: detail.scopes,
+                  });
+                  setEditError('');
+                  setEditOutcomeUnknown(undefined);
+                  setEditOutcomeChecked(false);
+                  setEditingClient(detail);
+                }}
+              >
+                编辑配置
+              </Button>
+              <Button
+                danger={detail.enabled}
+                onClick={() => {
+                  setStatusError('');
+                  setStatusOutcomeUnknown(false);
+                  setStatusTarget({ client: detail, enabled: !detail.enabled });
+                }}
+              >
+                {detail.enabled ? '停用客户端' : '启用客户端'}
+              </Button>
+              <Button
+                onClick={() => {
+                  setRotateError('');
+                  setRotateOutcomeUnknown(false);
+                  setRotateTarget(detail);
+                }}
+              >
+                轮换 Client Secret
+              </Button>
+            </Space>
           </>
         ) : null}
       </Drawer>
 
       <OneTimeValuesModal
-        title="客户端凭证（仅此一次）"
-        description="请立即将 Client Secret 保存到 Workbench 的受保护配置中。Client ID 也可在客户端详情中再次查看；Secret 不会再次返回。关闭后本页不会保留这两个值。"
+        title={
+          created ? '客户端凭证（仅此一次）' : '新 Client Secret（仅此一次）'
+        }
+        description={
+          created
+            ? '请立即将 Client Secret 保存到 Workbench 的受保护配置中。Client ID 也可在客户端详情中再次查看；Secret 不会再次返回。关闭后本页不会保留这两个值。'
+            : '请立即将新 Secret 保存到受保护配置中。该 Secret 只显示一次；关闭后本页不会保留它。轮换已撤销客户端原有授权，使用者需要重新授权。'
+        }
         values={
           created
             ? [
@@ -860,10 +1212,27 @@ const AdminOAuthClientsPage: React.FC = () => {
                   sensitive: true,
                 },
               ]
+            : rotatedSecret
+            ? [
+                {
+                  key: 'client-id',
+                  label: 'Client ID',
+                  value: rotatedSecret.clientId,
+                },
+                {
+                  key: 'client-secret',
+                  label: 'Client Secret',
+                  value: rotatedSecret.clientSecret,
+                  sensitive: true,
+                },
+              ]
             : []
         }
-        open={Boolean(created)}
-        onClose={() => setCreated(undefined)}
+        open={Boolean(created || rotatedSecret)}
+        onClose={() => {
+          setCreated(undefined);
+          setRotatedSecret(undefined);
+        }}
       />
     </AdminPage>
   );

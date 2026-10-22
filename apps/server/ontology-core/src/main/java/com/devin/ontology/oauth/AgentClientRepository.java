@@ -2,6 +2,8 @@ package com.devin.ontology.oauth;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
@@ -84,6 +86,78 @@ public class AgentClientRepository implements RegisteredClientRepository {
                         parseScopes(rs.getString("scopes")), rs.getBoolean("enabled"),
                         rs.getTimestamp("create_time").toInstant()), clientId)
                 .stream().findFirst().orElse(null);
+    }
+
+    /** 写操作按客户端行串行化，避免授权创建跨过配置变更与撤销事务。 */
+    public AppClientView lockForUpdate(final String recordId) {
+        return jdbc.query("SELECT id, client_id, display_name, redirect_uri, scopes, enabled, create_time "
+                        + "FROM ontology.og_app_client WHERE id = ? FOR UPDATE",
+                (rs, rowNum) -> new AppClientView(rs.getString("id"), rs.getString("client_id"),
+                        rs.getString("display_name"), rs.getString("redirect_uri"),
+                        parseScopes(rs.getString("scopes")), rs.getBoolean("enabled"),
+                        rs.getTimestamp("create_time").toInstant()), recordId)
+                .stream().findFirst().orElse(null);
+    }
+
+    public AppClientView viewByRecordId(final String recordId) {
+        return jdbc.query("SELECT id, client_id, display_name, redirect_uri, scopes, enabled, create_time "
+                        + "FROM ontology.og_app_client WHERE id = ?",
+                (rs, rowNum) -> new AppClientView(rs.getString("id"), rs.getString("client_id"),
+                        rs.getString("display_name"), rs.getString("redirect_uri"),
+                        parseScopes(rs.getString("scopes")), rs.getBoolean("enabled"),
+                        rs.getTimestamp("create_time").toInstant()), recordId)
+                .stream().findFirst().orElse(null);
+    }
+
+    /**
+     * 授权入口先保存客户端安全配置快照；授权落库时会在持有客户端行锁后复核。
+     * 快照只包含不可逆摘要，密钥轮换、回调、Scope 或启停变化都会使旧请求失效。
+     */
+    public String authorizationConfigFingerprintByClientId(final String clientId) {
+        return authorizationConfigFingerprint("client_id = ?", clientId);
+    }
+
+    public String authorizationConfigFingerprintByRecordId(final String recordId) {
+        return authorizationConfigFingerprint("id = ?", recordId);
+    }
+
+    private String authorizationConfigFingerprint(final String condition, final String value) {
+        return jdbc.query("SELECT id, client_id, client_secret_hash, redirect_uri, scopes, enabled "
+                        + "FROM ontology.og_app_client WHERE " + condition,
+                (rs, rowNum) -> fingerprint(rs.getString("id"), rs.getString("client_id"),
+                        rs.getString("client_secret_hash"), rs.getString("redirect_uri"),
+                        rs.getString("scopes"), rs.getBoolean("enabled")), value)
+                .stream().findFirst().orElse(null);
+    }
+
+    private String fingerprint(final String id, final String clientId, final String secretHash,
+            final String redirectUri, final String scopes, final boolean enabled) {
+        try {
+            // 数据库文本列不允许 NUL 字符，因此分隔后再哈希不会产生字段拼接歧义。
+            String canonical = String.join("\0", id, clientId, secretHash, redirectUri, scopes,
+                    Boolean.toString(enabled));
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(hash);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("JVM 缺少 SHA-256", impossible);
+        }
+    }
+
+    public void updateConfiguration(final String recordId, final String displayName,
+            final String redirectUri, final Set<String> scopes) {
+        jdbc.update("UPDATE ontology.og_app_client SET display_name = ?, redirect_uri = ?, scopes = ?, "
+                        + "update_time = NOW() WHERE id = ?",
+                displayName, redirectUri, String.join(" ", scopes.stream().sorted().toList()), recordId);
+    }
+
+    public void setEnabled(final String recordId, final boolean enabled) {
+        jdbc.update("UPDATE ontology.og_app_client SET enabled = ?, update_time = NOW() WHERE id = ?",
+                enabled, recordId);
+    }
+
+    public void updateSecretHash(final String recordId, final String secretHash) {
+        jdbc.update("UPDATE ontology.og_app_client SET client_secret_hash = ?, update_time = NOW() WHERE id = ?",
+                secretHash, recordId);
     }
 
     public String clientIdForRecord(final String recordId) {
