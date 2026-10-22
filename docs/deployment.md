@@ -15,7 +15,7 @@
 
    `migrate` 先启动数据库并完成一次性迁移。迁移失败时停止后续初始化并先检查日志。
 
-4. 创建 `deploy/private/bootstrap-admin.json` 首个系统管理员输入文件，限制父目录权限为 `0700`，文件权限为 `0600`。JSON 格式如下，密码须为 12–1024 个字符且不得与用户名相同：
+4. 创建 `deploy/private/bootstrap-input/bootstrap-admin.json` 首个系统管理员输入文件，限制父目录权限为 `0700`，文件权限为 `0600`（Docker secret 只读挂载也可用 `0400`）。JSON 格式如下，密码须为 12–1024 个字符且不得与用户名相同：
 
    ```json
    {"schemaVersion":1,"username":"owner","displayName":"System Owner","password":"请替换为高强度随机密码"}
@@ -52,9 +52,11 @@ deploy/ontology.sh status
 deploy/ontology.sh restore /受保护路径/ontology.dump ontology_restore_check
 ```
 
-该操作只创建独立目标库，不覆盖或切换当前应用数据库。用数据库管理员检查目标库 schema、管理员与业务记录，并在隔离环境将应用指向该库后验证登录和 AGE 图查询；确认恢复结果后，才按运维变更流程切换服务目标。禁止对未备份的原数据库直接做试恢复。
+该操作只创建独立目标库，不覆盖或切换当前应用数据库；恢复时会在新库重建迁移和运行角色权限。验证备份无误后，可停应用并将 `.env` 的 `DATABASE_NAME` 改为目标名，再执行 `init-config` 同步 JDBC 配置和 `up` 重建 API/web；确认登录、项目/图谱读取及 AGE 查询正常后完成切换。运行账号连接新库时必须切换到 `ontology_app_runtime`。禁止对未备份的原数据库直接做试恢复。
 
-App 包使用 `deploy/ontology.sh package-app`，读取 `deploy/private/package.json` 私有配置并在 `deploy/private/package-output/` 生成可上传 ZIP；包内只应包含 manifest、前端及必要服务描述，不含真实凭据。上传后在 Workbench 检查 App 可见性、页面授权、当前用户身份、Action 和模型调用，并执行凭据泄露检查。
+App 包使用 `deploy/ontology.sh package-app`，读取 `deploy/private/package.json` 私有配置并在 `deploy/private/package-output/` 生成管理员上传 ZIP。ZIP 根级 `oauth-clients.yaml` 必须含 Java Admin 签发的 Ontology App `clientId` 和 `clientSecret`，该 ZIP 是受保护的管理员凭据材料，只能通过受限管理员通道暂存和上传。服务端上游 Workbench OIDC `client-id/client-secret` 只保存在 `deploy/private/api-config/`，绝不能进入 App ZIP。该 ZIP 是 Workbench App 源包，不含 web 镜像中的前端构建产物；前端由 web 镜像提供。上传后在 Workbench 检查 App 可见性、页面授权、当前用户身份、Action 和模型调用。Docker 镜像与 deployment bundle 不含任何真实凭据。
+
+手动运行仓库的“Docker images”工作流后，可下载 `ontology-deployment-bundle-*` 工件。该压缩包只含 Compose、部署 CLI、本地权限 SQL/模板和本指南；不含源码构建依赖、`.env`、`private/` 或真实凭据。目标主机需安装 Docker Engine 与 Compose 插件，解压后按上文创建私有配置，再拉取与之匹配的固定镜像标签。
 
 ## 健康检查与故障排查
 
