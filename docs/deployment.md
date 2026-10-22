@@ -72,7 +72,7 @@ deploy/ontology.sh status
 deploy/ontology.sh restore /受保护路径/ontology.dump ontology_restore_check
 ```
 
-该操作只创建独立目标库，不覆盖或切换当前应用数据库；恢复时会在新库重建迁移和运行角色权限。验证备份无误后，可停应用并将 `.env` 的 `DATABASE_NAME` 改为目标名，再执行 `init-config` 同步 JDBC 配置和 `up` 重建 API/web；确认登录、项目/图谱读取及 AGE 查询正常后完成切换。运行账号连接新库时必须切换到 `ontology_app_runtime`。禁止对未备份的原数据库直接做试恢复。
+该操作只创建独立目标库，不覆盖或切换当前应用数据库；恢复会先在新库修复 AGE 逻辑备份中的图目录 OID 引用，再重建迁移和运行角色权限；节点、边及业务 ID 不重新生成。该修复只用于显式新库恢复，不用于日常启动或源库。验证备份无误后，可停应用并将 `.env` 的 `DATABASE_NAME` 改为目标名，再执行 `init-config` 同步 JDBC 配置和 `up` 重建 API/web；确认登录、项目/图谱读取及 AGE 查询正常后完成切换。运行账号连接新库时必须切换到 `ontology_app_runtime`。禁止对未备份的原数据库直接做试恢复。
 
 先在 Java Admin 为 `Ontology` 登记正式 App client，再把完整配置写入权限受限的 `deploy/private/package.json`：
 
