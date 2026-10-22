@@ -46,7 +46,9 @@ replacements = {
     "HTTP_BIND_PORT": "28083",
     "IMAGE_PREFIX": "ontology-smoke",
     "IMAGE_TAG": "ci",
-    "API_TRUSTED_PROXY_REGEX": r"172\.30\.0\.10",
+    "API_TRUSTED_PROXY_REGEX": r"10\.203\.35\.10",
+    "BACKEND_SUBNET": "10.203.35.0/24",
+    "WEB_BACKEND_IP": "10.203.35.10",
     "EDGE_TRUSTED_PROXY_CIDRS": "172.17.0.1/32",
 }
 lines = env_path.read_text().splitlines()

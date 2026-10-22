@@ -2,11 +2,11 @@
 
 本指南用于在已有生产服务器上部署独立的 Ontology 服务，并复用该服务器已有正式域名和 HTTPS 网关。只新增应用服务和全新生产数据库：不导入本机数据库、开发数据或测试账号，不建立 SSH/Cloudflare 等隧道，也不安装新的 TLS 网关或 Nginx。新库首次初始化只创建一个正式系统管理员。
 
-宿主机只需 Docker Engine、Docker Compose v2 和 POSIX shell；不需要 Git、Java/JVM、Node.js 或 Python。应用、迁移与 App 打包工具均在镜像中运行。部署 bundle 只包含 Compose、运维脚本和无密钥配置模板，私有凭据由服务器本地 `init-config` 生成。部署入口是 `deploy/compose.yaml` 和 `deploy/ontology.sh`。请使用同一组 `IMAGE_TAG` 固定 web、api、db、migrate、package 镜像版本；候选镜像存放于私有 GHCR 仓库。数据库基于固定摘要的 PostgreSQL 16.15、Apache AGE `PG16/v1.6.0-rc0` 和 pgvector `v0.8.1` 组合；不要单独升级数据库主版本或插件。
+宿主机只需 Docker Engine、Docker Compose v2 和 POSIX shell；不需要 Git、Java/JVM、Node.js 或 Python。应用、迁移与 App 打包工具均在镜像中运行。部署 bundle 只包含 Compose、运维脚本和无密钥配置模板，私有凭据由服务器本地 `init-config` 生成。部署入口是 `deploy/compose.yaml` 和 `deploy/ontology.sh`。请使用同一组 `IMAGE_TAG` 固定 web、api、db、migrate、package 镜像版本；候选镜像存放于私有 GHCR 仓库，当前交付面向 Linux x86_64（amd64）服务器。数据库基于固定摘要的 PostgreSQL 16.15、Apache AGE `PG16/v1.6.0-rc0` 和 pgvector `v0.8.1` 组合；不要单独升级数据库主版本或插件。
 
 ## 首次安装
 
-1. 从经审阅的交付 bundle 解压 `deploy/` 文件，在服务器为本应用创建独立且仅管理员可读写的目录。部署负责人（Mentor/运维）提供正式 `PUBLIC_ORIGIN`（HTTPS 服务域名）和 `EDGE_TRUSTED_PROXY_CIDRS`（该服务器网关连接 web 时实际可见的来源网段）；不得照抄本机地址或猜测网段。复制 `deploy/.env.example` 为 `deploy/.env`，设置 `IMAGE_PREFIX=ghcr.io/<owner>/<repo>`、发布的固定 `IMAGE_TAG` 和 `HTTP_BIND_PORT`。使用具备私有包读取权限的账户登录 GHCR（不要把访问令牌写入命令参数或部署文件）。不要把开发机的 `.env`、`private/`、数据库卷或测试账号复制到服务器。
+1. 从经审阅的交付 bundle 解压 `deploy/` 文件，在服务器为本应用创建独立且仅管理员可读写的目录。部署负责人（Mentor/运维）提供正式 `PUBLIC_ORIGIN`（HTTPS 服务域名）和 `EDGE_TRUSTED_PROXY_CIDRS`（该服务器网关连接 web 时实际可见的来源网段）；不得照抄本机地址或猜测网段。确认 `BACKEND_SUBNET` 不与服务器现有网络冲突；需要调整时，同步修改 `WEB_BACKEND_IP` 和 `API_TRUSTED_PROXY_REGEX`，然后运行 `init-config`。复制 `deploy/.env.example` 为 `deploy/.env`，设置 `IMAGE_PREFIX=ghcr.io/<owner>/<repo>`、发布的固定 `IMAGE_TAG` 和 `HTTP_BIND_PORT`。使用具备私有包读取权限的账户登录 GHCR（不要把访问令牌写入命令参数或部署文件）。不要把开发机的 `.env`、`private/`、数据库卷或测试账号复制到服务器。
 2. 执行 `deploy/ontology.sh init-config` 生成 `deploy/private/` 私有运行配置和数据库凭据；目录权限为 `0700`，生成文件为私有权限。需要 Workbench 登录时，由 Mentor/Workbench 管理员提供上游 OIDC Client ID/Secret，放入 `deploy/private/api-config/` 后再将 `.env` 的 `WORKBENCH_OIDC_ENABLED` 设为 `true`；不要把它们放入普通 `.env`、文档或 App ZIP。保管好该目录及管理员初始化 JSON，丢失凭据前需先安排凭据轮换。
 3. 在安装 Docker Compose 的主机拉取固定标签镜像并执行首次数据库迁移：
 
@@ -29,7 +29,7 @@
 
 ## 反向代理、HTTPS、Cookie 与 OIDC
 
-Compose 默认仅将 web 绑定到本机回环地址。由外部 Nginx、Caddy 或企业网关终止 TLS，并将请求转发到该回环地址；反代必须保留 Host，并正确设置 `X-Forwarded-For`。`EDGE_TRUSTED_PROXY_CIDRS` 只列外部 HTTPS 网关连接到 web 时可见的来源网段；`API_TRUSTED_PROXY_REGEX` 只信任内部 web 容器地址（模板默认 `172.30.0.10`）。不能信任任意客户端传入的转发头。外部访问地址必须使用最终 HTTPS Origin。
+Compose 默认仅将 web 绑定到本机回环地址。由外部 Nginx、Caddy 或企业网关终止 TLS，并将请求转发到该回环地址；反代必须保留 Host，并正确设置 `X-Forwarded-For`。`EDGE_TRUSTED_PROXY_CIDRS` 只列外部 HTTPS 网关连接到 web 时可见的来源网段；`API_TRUSTED_PROXY_REGEX` 只信任内部 web 容器地址（模板默认 `10.203.35.10`）。不能信任任意客户端传入的转发头。外部访问地址必须使用最终 HTTPS Origin。
 
 已有服务器使用 Nginx 时，只需在现有 HTTPS `server` 中为本服务域名添加反代；下面示例沿用 `.env` 默认回环端口，不需要安装 Nginx 或增加 TLS 容器：
 

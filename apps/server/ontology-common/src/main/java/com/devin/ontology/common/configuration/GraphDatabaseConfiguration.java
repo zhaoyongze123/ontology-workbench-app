@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -24,6 +25,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
  */
 @Slf4j
 @Configuration
+// 初始化身份的维护账号没有图谱权限；bootstrap 不承担日常图数据库连接和校验职责。
+@Profile("!bootstrap")
 public class GraphDatabaseConfiguration {
 
     private final JdbcTemplate jdbcTemplate;
