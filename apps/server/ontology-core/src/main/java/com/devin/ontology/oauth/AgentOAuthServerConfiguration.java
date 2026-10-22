@@ -23,8 +23,8 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
-import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
+import org.springframework.security.oauth2.server.authorization.web.authentication.OAuth2AuthorizationCodeRequestAuthenticationConverter;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.http.HttpStatus;
@@ -83,7 +83,7 @@ public class AgentOAuthServerConfiguration {
     @Bean
     @Order(1)
     SecurityFilterChain agentOAuthServerFilterChain(final HttpSecurity http,
-            final RegisteredClientRepository clients, final OAuth2AuthorizationService authorizations,
+            final AgentClientRepository clients, final OAuth2AuthorizationService authorizations,
             final OAuth2AuthorizationConsentService consents,
             final IdentityRepository identities,
             final AuthorizationServerSettings settings,
@@ -101,7 +101,25 @@ public class AgentOAuthServerConfiguration {
                         .authorizationConsentService(consents)
                         .authorizationServerSettings(settings)
                         .tokenGenerator(tokenGenerator)
-                        .authorizationEndpoint(endpoint -> endpoint.consentPage("/oidc/app/consent")))
+                        .authorizationEndpoint(endpoint -> endpoint
+                                .consentPage("/oidc/app/consent")
+                                .authorizationRequestConverters(converters -> {
+                                    boolean snapshotConverterInstalled = false;
+                                    for (int index = 0; index < converters.size(); index++) {
+                                        if (converters.get(index)
+                                                instanceof OAuth2AuthorizationCodeRequestAuthenticationConverter) {
+                                            converters.set(index,
+                                                    new ClientConfigurationSnapshotAuthenticationConverter(
+                                                            clients));
+                                            snapshotConverterInstalled = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!snapshotConverterInstalled) {
+                                        throw new IllegalStateException(
+                                                "未找到 Spring Authorization Server 的授权请求转换器");
+                                    }
+                                })))
                 // 只有服务端 token/revoke 请求不使用浏览器 Cookie；浏览器授权确认仍受 CSRF 保护。
                 .csrf(csrf -> csrf.ignoringRequestMatchers("/oidc/app/token", "/oidc/app/revoke"))
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())

@@ -114,8 +114,10 @@ public class AppClientManagementService {
         if (current == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
         if (current.enabled()) return;
 
+        // 兼容早期版本可能遗留的有效授权：重新启用必须重新征求用户同意，不能恢复旧令牌。
+        revokeClientAuthorizations(clientRecordId);
+        clearClientConsents(clientRecordId);
         clients.setEnabled(clientRecordId, true);
-        // 启用只允许发起新授权，不会清除旧授权的 revoked_at，也不会恢复旧令牌。
         jdbc.update("INSERT INTO ontology.og_audit_event(event_type, actor_user_id, details_json) "
                         + "VALUES ('APP_CLIENT_ENABLED', ?, jsonb_build_object('clientId', ?))",
                 actor.id(), current.clientId());

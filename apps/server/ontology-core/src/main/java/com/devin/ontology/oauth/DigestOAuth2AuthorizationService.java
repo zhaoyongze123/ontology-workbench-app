@@ -213,11 +213,15 @@ public class DigestOAuth2AuthorizationService implements OAuth2AuthorizationServ
 
     private void validateCurrentClientConfiguration(final OAuth2Authorization authorization,
             final OAuth2AuthorizationRequest request, final AgentClientRepository.AppClientView currentView) {
+        String requestedFingerprint = string(request.getAdditionalParameters().get(
+                ClientConfigurationSnapshotAuthenticationConverter.CONFIG_FINGERPRINT_PARAMETER));
+        String currentFingerprint = clients.authorizationConfigFingerprintByRecordId(currentView.id());
         if (!currentView.clientId().equals(request.getClientId())
                 || !currentView.redirectUri().equals(request.getRedirectUri())
                 || !currentView.scopes().containsAll(request.getScopes())
                 || !request.getScopes().containsAll(authorization.getAuthorizedScopes())
-                || !currentView.scopes().containsAll(authorization.getAuthorizedScopes())) {
+                || !currentView.scopes().containsAll(authorization.getAuthorizedScopes())
+                || requestedFingerprint == null || !requestedFingerprint.equals(currentFingerprint)) {
             throw authorizationRejected(OAuth2ErrorCodes.INVALID_REQUEST,
                     "OAuth 客户端配置已变化，请重新发起授权。");
         }

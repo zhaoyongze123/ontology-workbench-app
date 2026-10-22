@@ -534,73 +534,46 @@ class AgentOAuthAuthorizationIntegrationTest {
                 String.class, clientId);
 
         // 模拟授权请求先读到旧客户端，随后管理员持锁修改回调地址并撤销旧授权。
-        RegisteredClient staleClient = clientRepository.findById(clientRecordId);
-        Instant loginAt = Instant.now();
-        LoginUserPrincipal principal = new LoginUserPrincipal(userId, username,
-                "OAuth integration admin", true,
-                jdbc.queryForObject("SELECT auth_version FROM ontology.og_user WHERE id = ?", Long.class, userId),
-                loginAt.toEpochMilli());
-        var authentication = UsernamePasswordAuthenticationToken.authenticated(principal, null,
-                List.of(new SimpleGrantedAuthority("ROLE_SYSTEM_ADMIN")));
-        OAuth2AuthorizationRequest staleRequest = OAuth2AuthorizationRequest.authorizationCode()
-                .authorizationUri(PUBLIC_ORIGIN + "api/v1/oidc/app/authorize")
-                .clientId(clientId).redirectUri(REDIRECT_URI).scopes(Set.of("profile"))
-                .state("stale-authorization-" + UUID.randomUUID()).build();
-        OAuth2Authorization staleAuthorization = OAuth2Authorization.withRegisteredClient(staleClient)
-                .id(UUID.randomUUID().toString()).principalName(userId)
-                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                .authorizedScopes(Set.of("profile"))
-                .attribute(java.security.Principal.class.getName(), authentication)
-                .attribute(OpaqueOAuth2TokenGenerator.LOGIN_AT_ATTRIBUTE, loginAt)
-                .attribute(OpaqueOAuth2TokenGenerator.ABSOLUTE_EXPIRY_ATTRIBUTE, loginAt.plus(Duration.ofHours(8)))
-                .attribute(OAuth2AuthorizationRequest.class.getName(), staleRequest)
-                .build();
-
-        CountDownLatch adminHasLock = new CountDownLatch(1);
-        CountDownLatch allowAdminCommit = new CountDownLatch(1);
-        CountDownLatch authorizationSaveStarted = new CountDownLatch(1);
-        CompletableFuture<Void> adminUpdate = CompletableFuture.runAsync(() ->
-                new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-                    assertThat(clientRepository.lockForUpdate(clientRecordId)).isNotNull();
-                    adminHasLock.countDown();
-                    try {
-                        if (!allowAdminCommit.await(5, TimeUnit.SECONDS)) {
-                            throw new IllegalStateException("等待 OAuth 并发测试释放客户端锁超时");
-                        }
-                    } catch (InterruptedException interrupted) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException("OAuth 并发测试被中断", interrupted);
-                    }
-                    clientRepository.updateConfiguration(clientRecordId, "OAuth concurrent update probe",
-                            "https://app.example.test/updated-callback", Set.of("profile"));
-                    jdbc.update("UPDATE ontology.og_app_authorization SET revoked_at = NOW(), "
-                                    + "access_active = FALSE WHERE client_record_id = ?",
-                            clientRecordId);
-                    jdbc.update("DELETE FROM ontology.og_app_authorization_consent WHERE client_record_id = ?",
-                            clientRecordId);
-                }));
-        assertThat(adminHasLock.await(5, TimeUnit.SECONDS)).isTrue();
-
-        CompletableFuture<Void> staleSave = CompletableFuture.runAsync(() -> {
-            authorizationSaveStarted.countDown();
-            authorizationService.save(staleAuthorization);
+        OAuth2Authorization staleAuthorization = staleAuthorization(clientId, REDIRECT_URI, Set.of("profile"));
+        assertConcurrentAuthorizationRejected(staleAuthorization, () -> {
+            clientRepository.updateConfiguration(clientRecordId, "OAuth concurrent update probe",
+                    "https://app.example.test/updated-callback", Set.of("profile"));
+            revokeAndClearClientAuthorizationState();
         });
-        try {
-            assertThat(authorizationSaveStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            // 若授权没有参与客户端行锁，这次保存会越过管理员事务并留下旧回调地址授权。
-            assertThatThrownBy(() -> staleSave.get(250, TimeUnit.MILLISECONDS))
-                    .isInstanceOf(TimeoutException.class);
-        } finally {
-            allowAdminCommit.countDown();
-        }
-        adminUpdate.get(5, TimeUnit.SECONDS);
-        assertThatThrownBy(() -> staleSave.get(5, TimeUnit.SECONDS))
-                .isInstanceOf(ExecutionException.class)
-                .hasCauseInstanceOf(org.springframework.security.oauth2.core.OAuth2AuthorizationException.class);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_authorization WHERE id = ?",
                 Long.class, staleAuthorization.getId())).isZero();
         assertThat(jdbc.queryForObject("SELECT redirect_uri FROM ontology.og_app_client WHERE id = ?",
                 String.class, clientRecordId)).isEqualTo("https://app.example.test/updated-callback");
+    }
+
+    @Test
+    void authorizationCreationRejectsSecretRotationThatWinsClientLock() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth concurrent secret probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        String clientId = mapper.readTree(created.body()).path("clientId").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+        OAuth2Authorization staleAuthorization = staleAuthorization(clientId, REDIRECT_URI, Set.of("profile"));
+        String oldSecretHash = jdbc.queryForObject("SELECT client_secret_hash FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId);
+
+        assertConcurrentAuthorizationRejected(staleAuthorization, () -> {
+            clientRepository.updateSecretHash(clientRecordId, passwordEncoder.encode("rotated-test-only-secret"));
+            revokeAndClearClientAuthorizationState();
+        });
+        String newSecretHash = jdbc.queryForObject("SELECT client_secret_hash FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId);
+        assertThat(newSecretHash).isNotEqualTo(oldSecretHash);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_authorization WHERE id = ?",
+                Long.class, staleAuthorization.getId())).isZero();
     }
 
     @Test
@@ -621,6 +594,12 @@ class AgentOAuthAuthorizationIntegrationTest {
         clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
                 String.class, clientId);
         String originalAccessToken = authorizeAndExchange(client, clientId, clientSecret, "profile");
+        String persistedRequest = jdbc.queryForObject("SELECT authorization_request_json::text "
+                + "FROM ontology.og_app_authorization WHERE client_record_id = ? AND user_id = ?",
+                String.class, clientRecordId, userId);
+        assertThat(persistedRequest)
+                .contains(ClientConfigurationSnapshotAuthenticationConverter.CONFIG_FINGERPRINT_PARAMETER)
+                .doesNotContain(clientSecret);
 
         csrf = csrfToken();
         HttpResponse<String> disabled = send(HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId))
@@ -628,12 +607,26 @@ class AgentOAuthAuthorizationIntegrationTest {
         assertThat(disabled.statusCode()).isEqualTo(200);
         assertThat(getBearer(originalAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
 
+        // 模拟旧版本留下授权记录及同意记录；启用操作必须先清理，不能让历史授权复活。
+        jdbc.update("INSERT INTO ontology.og_app_authorization_consent(client_record_id, user_id, scopes) "
+                        + "VALUES (?, ?, 'profile') ON CONFLICT (client_record_id, user_id) "
+                        + "DO UPDATE SET scopes = EXCLUDED.scopes",
+                clientRecordId, userId);
+        jdbc.update("UPDATE ontology.og_app_authorization SET revoked_at = NULL, access_active = TRUE "
+                        + "WHERE client_record_id = ? AND user_id = ?",
+                clientRecordId, userId);
+
         csrf = csrfToken();
         HttpResponse<String> enabled = send(HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId
                 + "/enable")).header("X-CSRF-TOKEN", csrf).POST(HttpRequest.BodyPublishers.noBody()).build());
         assertThat(enabled.statusCode()).isEqualTo(200);
         assertThat(jdbc.queryForObject("SELECT enabled FROM ontology.og_app_client WHERE id = ?",
                 Boolean.class, clientRecordId)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_authorization_consent "
+                + "WHERE client_record_id = ?", Long.class, clientRecordId)).isZero();
+        assertThat(jdbc.queryForObject("SELECT revoked_at IS NOT NULL AND access_active = FALSE "
+                + "FROM ontology.og_app_authorization WHERE client_record_id = ? AND user_id = ?",
+                Boolean.class, clientRecordId, userId)).isTrue();
         assertThat(getBearer(originalAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
 
         String newAccessToken = authorizeAndExchange(client, clientId, clientSecret, "profile");
@@ -1224,6 +1217,83 @@ class AgentOAuthAuthorizationIntegrationTest {
         return mapper.readTree(response.body()).path("token").asText();
     }
 
+    private OAuth2Authorization staleAuthorization(final String clientId, final String redirectUri,
+            final Set<String> scopes) {
+        RegisteredClient staleClient = clientRepository.findById(clientRecordId);
+        assertThat(staleClient).isNotNull();
+        Instant loginAt = Instant.now();
+        LoginUserPrincipal principal = new LoginUserPrincipal(userId, username,
+                "OAuth integration admin", true,
+                jdbc.queryForObject("SELECT auth_version FROM ontology.og_user WHERE id = ?", Long.class, userId),
+                loginAt.toEpochMilli());
+        var authentication = UsernamePasswordAuthenticationToken.authenticated(principal, null,
+                List.of(new SimpleGrantedAuthority("ROLE_SYSTEM_ADMIN")));
+        String fingerprint = clientRepository.authorizationConfigFingerprintByRecordId(clientRecordId);
+        OAuth2AuthorizationRequest staleRequest = OAuth2AuthorizationRequest.authorizationCode()
+                .authorizationUri(PUBLIC_ORIGIN + "api/v1/oidc/app/authorize")
+                .clientId(clientId).redirectUri(redirectUri).scopes(scopes)
+                .state("stale-authorization-" + UUID.randomUUID())
+                .additionalParameters(Map.of(
+                        ClientConfigurationSnapshotAuthenticationConverter.CONFIG_FINGERPRINT_PARAMETER,
+                        fingerprint))
+                .build();
+        return OAuth2Authorization.withRegisteredClient(staleClient)
+                .id(UUID.randomUUID().toString()).principalName(userId)
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .authorizedScopes(scopes)
+                .attribute(java.security.Principal.class.getName(), authentication)
+                .attribute(OpaqueOAuth2TokenGenerator.LOGIN_AT_ATTRIBUTE, loginAt)
+                .attribute(OpaqueOAuth2TokenGenerator.ABSOLUTE_EXPIRY_ATTRIBUTE, loginAt.plus(Duration.ofHours(8)))
+                .attribute(OAuth2AuthorizationRequest.class.getName(), staleRequest)
+                .build();
+    }
+
+    private void assertConcurrentAuthorizationRejected(final OAuth2Authorization staleAuthorization,
+            final Runnable adminMutation) throws Exception {
+        CountDownLatch adminHasLock = new CountDownLatch(1);
+        CountDownLatch allowAdminCommit = new CountDownLatch(1);
+        CountDownLatch authorizationSaveStarted = new CountDownLatch(1);
+        CompletableFuture<Void> adminUpdate = CompletableFuture.runAsync(() ->
+                new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                    assertThat(clientRepository.lockForUpdate(clientRecordId)).isNotNull();
+                    adminHasLock.countDown();
+                    try {
+                        if (!allowAdminCommit.await(5, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException("等待 OAuth 并发测试释放客户端锁超时");
+                        }
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("OAuth 并发测试被中断", interrupted);
+                    }
+                    adminMutation.run();
+                }));
+        assertThat(adminHasLock.await(5, TimeUnit.SECONDS)).isTrue();
+
+        CompletableFuture<Void> staleSave = CompletableFuture.runAsync(() -> {
+            authorizationSaveStarted.countDown();
+            authorizationService.save(staleAuthorization);
+        });
+        try {
+            assertThat(authorizationSaveStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            // 若授权写入没有等待客户端行锁，就会越过配置维护事务并留下过期授权。
+            assertThatThrownBy(() -> staleSave.get(250, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(TimeoutException.class);
+        } finally {
+            allowAdminCommit.countDown();
+        }
+        adminUpdate.get(5, TimeUnit.SECONDS);
+        assertThatThrownBy(() -> staleSave.get(5, TimeUnit.SECONDS))
+                .isInstanceOf(ExecutionException.class)
+                .hasCauseInstanceOf(org.springframework.security.oauth2.core.OAuth2AuthorizationException.class);
+    }
+
+    private void revokeAndClearClientAuthorizationState() {
+        jdbc.update("UPDATE ontology.og_app_authorization SET revoked_at = NOW(), access_active = FALSE, "
+                        + "consent_state_digest = NULL, consent_state_expires_at = NULL "
+                        + "WHERE client_record_id = ?", clientRecordId);
+        jdbc.update("DELETE FROM ontology.og_app_authorization_consent WHERE client_record_id = ?", clientRecordId);
+    }
+
     private String csrfToken(final java.net.http.HttpClient sessionClient) throws Exception {
         HttpResponse<String> response = get(sessionClient, "/auth/csrf");
         assertThat(response.statusCode()).isEqualTo(200);
@@ -1259,7 +1329,10 @@ class AgentOAuthAuthorizationIntegrationTest {
         for (String scope : scopes.split("\\s+")) approval.add(Map.entry("scope", scope));
         HttpResponse<String> approved = postForm(sessionClient, "/oidc/app/authorize", csrf, approval);
         assertThat(approved.statusCode()).isBetween(300, 399);
-        String code = queryParameters(resolveLocation(approved).getRawQuery()).get("code");
+        Map<String, String> callbackParameters = queryParameters(resolveLocation(approved).getRawQuery());
+        assertThat(callbackParameters)
+                .doesNotContainKey(ClientConfigurationSnapshotAuthenticationConverter.CONFIG_FINGERPRINT_PARAMETER);
+        String code = callbackParameters.get("code");
         assertThat(code).isNotBlank();
         HttpResponse<String> tokens = postForm("/oidc/app/token", null,
                 List.of(Map.entry("grant_type", "authorization_code"), Map.entry("client_id", clientId),
