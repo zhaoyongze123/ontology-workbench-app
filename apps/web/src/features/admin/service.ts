@@ -57,6 +57,15 @@ export type CreatedAppClient = {
   redirectUri: string;
   scopes: string[];
 };
+export type AppClientConfiguration = {
+  displayName: string;
+  redirectUri: string;
+  scopes: string[];
+};
+export type RotatedAppClientSecret = {
+  clientId: string;
+  clientSecret: string;
+};
 export const getOAuthClients = () =>
   request<AppClient[]>('/api/v1/admin/oauth/clients', { method: 'GET' });
 export const createOAuthClient = (data: {
@@ -72,6 +81,21 @@ export const disableOAuthClient = (id: string) =>
   request<{ status: string }>(
     '/api/v1/admin/oauth/clients/' + encodeURIComponent(id),
     { method: 'DELETE' },
+  );
+export const updateOAuthClient = (id: string, data: AppClientConfiguration) =>
+  request<AppClient>('/api/v1/admin/oauth/clients/' + encodeURIComponent(id), {
+    method: 'PUT',
+    data,
+  });
+export const enableOAuthClient = (id: string) =>
+  request<{ status: string }>(
+    '/api/v1/admin/oauth/clients/' + encodeURIComponent(id) + '/enable',
+    { method: 'POST' },
+  );
+export const rotateOAuthClientSecret = (id: string) =>
+  request<RotatedAppClientSecret>(
+    '/api/v1/admin/oauth/clients/' + encodeURIComponent(id) + '/rotate-secret',
+    { method: 'POST' },
   );
 
 export type AuditEvent = {

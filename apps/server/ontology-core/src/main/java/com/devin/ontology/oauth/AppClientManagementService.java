@@ -8,6 +8,7 @@ import java.net.URI;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -44,47 +45,125 @@ public class AppClientManagementService {
     @Transactional
     public AgentClientRepository.CreatedAppClient create(final CreateClientRequest request) {
         InternalUser actor = requireAdmin();
-        if (request == null || request.displayName() == null || request.displayName().isBlank()
-                || request.displayName().length() > 160) {
-            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
-        }
-        String redirectUri = validateRedirectUri(request.redirectUri());
-        Set<String> scopes = request.scopes() == null ? Set.of() : new HashSet<>(request.scopes());
-        if (scopes.stream().anyMatch(Objects::isNull) || !scopes.contains("profile") || scopes.isEmpty()
-                || !AgentClientRepository.supportedScopes().containsAll(scopes)) {
-            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
-        }
+        ClientSettings settings = validateSettings(request == null ? null : request.displayName(),
+                request == null ? null : request.redirectUri(), request == null ? null : request.scopes());
 
         String id = UUID.randomUUID().toString();
         String clientId = "ontology_" + randomValue(18);
         String clientSecret = randomValue(32);
         var client = AgentClientRepository.newClient(id, clientId,
-                passwordEncoder.encode(clientSecret), request.displayName().trim(), redirectUri, scopes);
+                passwordEncoder.encode(clientSecret), settings.displayName(), settings.redirectUri(), settings.scopes());
         clients.save(client);
         jdbc.update("INSERT INTO ontology.og_audit_event(event_type, actor_user_id, details_json) "
                         + "VALUES ('APP_CLIENT_CREATED', ?, jsonb_build_object('clientId', ?, 'scopes', ?::jsonb))",
-                actor.id(), clientId, toJsonArray(scopes));
+                actor.id(), clientId, toJsonArray(settings.scopes()));
         return new AgentClientRepository.CreatedAppClient(clientId, clientSecret,
-                request.displayName().trim(), redirectUri, scopes);
+                settings.displayName(), settings.redirectUri(), settings.scopes());
+    }
+
+    @Transactional
+    public AgentClientRepository.AppClientView update(final String clientRecordId,
+            final UpdateClientRequest request) {
+        InternalUser actor = requireAdmin();
+        AgentClientRepository.AppClientView current = clients.lockAdminView(clientRecordId);
+        if (current == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
+
+        ClientSettings settings = validateSettings(request == null ? null : request.displayName(),
+                request == null ? null : request.redirectUri(), request == null ? null : request.scopes());
+        boolean nameChanged = !current.displayName().equals(settings.displayName());
+        boolean redirectChanged = !current.redirectUri().equals(settings.redirectUri());
+        boolean scopesChanged = !current.scopes().equals(settings.scopes());
+        if (!nameChanged && !redirectChanged && !scopesChanged) return current;
+
+        clients.updateConfiguration(clientRecordId, settings.displayName(), settings.redirectUri(), settings.scopes());
+        if (redirectChanged || scopesChanged) {
+            // 回调和权限范围改变后，旧授权不再代表当前配置；撤销令牌并要求用户重新授权。
+            revokeClientAuthorizations(clientRecordId);
+            clearClientConsents(clientRecordId);
+        }
+
+        Set<String> changedFields = new LinkedHashSet<>();
+        if (nameChanged) changedFields.add("displayName");
+        if (redirectChanged) changedFields.add("redirectUri");
+        if (scopesChanged) changedFields.add("scopes");
+        jdbc.update("INSERT INTO ontology.og_audit_event(event_type, actor_user_id, details_json) "
+                        + "VALUES ('APP_CLIENT_UPDATED', ?, jsonb_build_object('clientId', ?, 'changedFields', ?::jsonb))",
+                actor.id(), current.clientId(), toJsonArray(changedFields));
+        return clients.viewByRecordId(clientRecordId);
     }
 
     @Transactional
     public void disable(final String clientRecordId) {
         InternalUser actor = requireAdmin();
-        String clientId = clients.clientIdForRecord(clientRecordId);
-        if (clientId == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
-        jdbc.update("UPDATE ontology.og_app_client SET enabled = FALSE, update_time = NOW() WHERE id = ?",
-                clientRecordId);
+        AgentClientRepository.AppClientView current = clients.lockAdminView(clientRecordId);
+        if (current == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
+        if (current.enabled()) {
+            clients.setEnabled(clientRecordId, false);
+            jdbc.update("INSERT INTO ontology.og_audit_event(event_type, actor_user_id, details_json) "
+                            + "VALUES ('APP_CLIENT_DISABLED', ?, jsonb_build_object('clientId', ?))",
+                    actor.id(), current.clientId());
+        }
+        revokeClientAuthorizations(clientRecordId);
+        clearClientConsents(clientRecordId);
+    }
+
+    @Transactional
+    public void enable(final String clientRecordId) {
+        InternalUser actor = requireAdmin();
+        AgentClientRepository.AppClientView current = clients.lockAdminView(clientRecordId);
+        if (current == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
+        if (current.enabled()) return;
+
+        clients.setEnabled(clientRecordId, true);
+        // 启用只允许发起新授权，不会清除旧授权的 revoked_at，也不会恢复旧令牌。
+        jdbc.update("INSERT INTO ontology.og_audit_event(event_type, actor_user_id, details_json) "
+                        + "VALUES ('APP_CLIENT_ENABLED', ?, jsonb_build_object('clientId', ?))",
+                actor.id(), current.clientId());
+    }
+
+    @Transactional
+    public RotatedClientSecret rotateSecret(final String clientRecordId) {
+        InternalUser actor = requireAdmin();
+        AgentClientRepository.AppClientView current = clients.lockAdminView(clientRecordId);
+        if (current == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
+
+        String clientSecret = randomValue(32);
+        clients.updateSecretHash(clientRecordId, passwordEncoder.encode(clientSecret));
+        revokeClientAuthorizations(clientRecordId);
+        clearClientConsents(clientRecordId);
+        jdbc.update("INSERT INTO ontology.og_audit_event(event_type, actor_user_id, details_json) "
+                        + "VALUES ('APP_CLIENT_SECRET_ROTATED', ?, jsonb_build_object('clientId', ?))",
+                actor.id(), current.clientId());
+        return new RotatedClientSecret(current.clientId(), clientSecret);
+    }
+
+    private void revokeClientAuthorizations(final String clientRecordId) {
         jdbc.update("UPDATE ontology.og_app_authorization SET revoked_at = COALESCE(revoked_at, NOW()), "
+                        + "consent_state_digest = NULL, consent_state_expires_at = NULL, "
                         + "access_active = FALSE, update_time = NOW() WHERE client_record_id = ?",
                 clientRecordId);
         jdbc.update("UPDATE ontology.og_app_refresh_token_history h SET status = 'REVOKED' "
                         + "FROM ontology.og_app_authorization a "
                         + "WHERE h.authorization_id = a.id AND a.client_record_id = ? AND h.status <> 'REVOKED'",
                 clientRecordId);
-        jdbc.update("INSERT INTO ontology.og_audit_event(event_type, actor_user_id, details_json) "
-                        + "VALUES ('APP_CLIENT_DISABLED', ?, jsonb_build_object('clientId', ?))",
-                actor.id(), clientId);
+    }
+
+    private void clearClientConsents(final String clientRecordId) {
+        jdbc.update("DELETE FROM ontology.og_app_authorization_consent WHERE client_record_id = ?", clientRecordId);
+    }
+
+    private ClientSettings validateSettings(final String displayName, final String redirectUri,
+            final Set<String> requestedScopes) {
+        if (displayName == null || displayName.isBlank() || displayName.trim().length() > 160) {
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
+        }
+        String validatedRedirectUri = validateRedirectUri(redirectUri);
+        Set<String> scopes = requestedScopes == null ? Set.of() : new HashSet<>(requestedScopes);
+        if (scopes.stream().anyMatch(Objects::isNull) || !scopes.contains("profile") || scopes.isEmpty()
+                || !AgentClientRepository.supportedScopes().containsAll(scopes)) {
+            throw new OntologyApiException(ApiErrorCode.REQUEST_INVALID);
+        }
+        return new ClientSettings(displayName.trim(), validatedRedirectUri, Set.copyOf(scopes));
     }
 
     private InternalUser requireAdmin() {
@@ -122,4 +201,10 @@ public class AppClientManagementService {
     }
 
     public record CreateClientRequest(String displayName, String redirectUri, Set<String> scopes) { }
+
+    public record UpdateClientRequest(String displayName, String redirectUri, Set<String> scopes) { }
+
+    public record RotatedClientSecret(String clientId, String clientSecret) { }
+
+    private record ClientSettings(String displayName, String redirectUri, Set<String> scopes) { }
 }

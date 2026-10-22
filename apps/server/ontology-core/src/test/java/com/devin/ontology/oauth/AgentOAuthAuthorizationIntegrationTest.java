@@ -410,6 +410,210 @@ class AgentOAuthAuthorizationIntegrationTest {
     }
 
     @Test
+    void clientConfigurationChangesRevokeGrantsButDisplayNameChangesDoNot() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth configuration probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile", "ontology.read")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        JsonNode clientBody = mapper.readTree(created.body());
+        String clientId = clientBody.path("clientId").asText();
+        String clientSecret = clientBody.path("clientSecret").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+        String accessToken = authorizeAndExchange(client, clientId, clientSecret, "profile ontology.read");
+
+        csrf = csrfToken();
+        HttpResponse<String> renamed = putJson("/admin/oauth/clients/" + clientRecordId, csrf,
+                Map.of("displayName", "Renamed OAuth client", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile", "ontology.read")));
+        assertThat(renamed.statusCode()).isEqualTo(200);
+        assertThat(mapper.readTree(renamed.body()).path("clientId").asText()).isEqualTo(clientId);
+        assertThat(getBearer(accessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(200);
+
+        String updatedRedirectUri = "https://app.example.test/updated-callback";
+        csrf = csrfToken();
+        HttpResponse<String> updated = putJson("/admin/oauth/clients/" + clientRecordId, csrf,
+                Map.of("displayName", "Renamed OAuth client", "redirectUri", updatedRedirectUri,
+                        "scopes", List.of("profile")));
+        assertThat(updated.statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT redirect_uri FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo(updatedRedirectUri);
+        assertThat(jdbc.queryForObject("SELECT scopes FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo("profile");
+        assertThat(jdbc.queryForObject("SELECT revoked_at IS NOT NULL AND access_active = FALSE "
+                + "FROM ontology.og_app_authorization WHERE client_record_id = ? AND user_id = ?",
+                Boolean.class, clientRecordId, userId)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_authorization_consent "
+                + "WHERE client_record_id = ?", Long.class, clientRecordId)).isZero();
+        assertThat(getBearer(accessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+
+        String details = jdbc.queryForObject("SELECT details_json::text FROM ontology.og_audit_event "
+                + "WHERE event_type = 'APP_CLIENT_UPDATED' AND actor_user_id = ? "
+                + "AND details_json->>'clientId' = ? ORDER BY create_time DESC LIMIT 1", String.class, userId, clientId);
+        assertThat(details).contains("redirectUri", "scopes").doesNotContain(updatedRedirectUri);
+    }
+
+    @Test
+    void invalidClientConfigurationUpdatesDoNotChangeStoredSettings() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth validation probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile", "ontology.read")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        String clientId = mapper.readTree(created.body()).path("clientId").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+
+        csrf = csrfToken();
+        HttpResponse<String> invalidRedirect = putJson("/admin/oauth/clients/" + clientRecordId, csrf,
+                Map.of("displayName", "Changed name", "redirectUri", "http://insecure.example.test/callback",
+                        "scopes", List.of("profile")));
+        assertThat(invalidRedirect.statusCode()).isEqualTo(400);
+
+        csrf = csrfToken();
+        HttpResponse<String> unsupportedScope = putJson("/admin/oauth/clients/" + clientRecordId, csrf,
+                Map.of("displayName", "Changed name", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile", "admin.root")));
+        assertThat(unsupportedScope.statusCode()).isEqualTo(400);
+
+        assertThat(jdbc.queryForObject("SELECT display_name FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo("OAuth validation probe");
+        assertThat(jdbc.queryForObject("SELECT redirect_uri FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo(REDIRECT_URI);
+        assertThat(jdbc.queryForObject("SELECT scopes FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo("ontology.read profile");
+    }
+
+    @Test
+    void reEnablingClientAllowsNewAuthorizationWithoutRestoringOldTokens() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth enable probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        JsonNode clientBody = mapper.readTree(created.body());
+        String clientId = clientBody.path("clientId").asText();
+        String clientSecret = clientBody.path("clientSecret").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+        String originalAccessToken = authorizeAndExchange(client, clientId, clientSecret, "profile");
+
+        csrf = csrfToken();
+        HttpResponse<String> disabled = send(HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId))
+                .header("X-CSRF-TOKEN", csrf).DELETE().build());
+        assertThat(disabled.statusCode()).isEqualTo(200);
+        assertThat(getBearer(originalAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+
+        csrf = csrfToken();
+        HttpResponse<String> enabled = send(HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId
+                + "/enable")).header("X-CSRF-TOKEN", csrf).POST(HttpRequest.BodyPublishers.noBody()).build());
+        assertThat(enabled.statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT enabled FROM ontology.og_app_client WHERE id = ?",
+                Boolean.class, clientRecordId)).isTrue();
+        assertThat(getBearer(originalAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+
+        String newAccessToken = authorizeAndExchange(client, clientId, clientSecret, "profile");
+        assertThat(getBearer(newAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_audit_event "
+                + "WHERE event_type = 'APP_CLIENT_ENABLED' AND actor_user_id = ? "
+                + "AND details_json->>'clientId' = ?", Long.class, userId, clientId)).isEqualTo(1L);
+    }
+
+    @Test
+    void secretRotationReturnsOnlyNewSecretAndRevokesExistingGrant() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth secret rotation probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        JsonNode clientBody = mapper.readTree(created.body());
+        String clientId = clientBody.path("clientId").asText();
+        String oldSecret = clientBody.path("clientSecret").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+        String oldAccessToken = authorizeAndExchange(client, clientId, oldSecret, "profile");
+
+        csrf = csrfToken();
+        HttpResponse<String> rotated = send(HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId
+                + "/rotate-secret")).header("X-CSRF-TOKEN", csrf).POST(HttpRequest.BodyPublishers.noBody()).build());
+        assertThat(rotated.statusCode()).isEqualTo(200);
+        assertThat(rotated.headers().firstValue("cache-control").orElse("")).contains("no-store");
+        JsonNode rotatedBody = mapper.readTree(rotated.body());
+        String newSecret = rotatedBody.path("clientSecret").asText();
+        assertThat(newSecret).isNotBlank().isNotEqualTo(oldSecret);
+        String storedHash = jdbc.queryForObject("SELECT client_secret_hash FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId);
+        assertThat(storedHash).isNotEqualTo(newSecret);
+        assertThat(passwordEncoder.matches(oldSecret, storedHash)).isFalse();
+        assertThat(passwordEncoder.matches(newSecret, storedHash)).isTrue();
+        assertThat(getBearer(oldAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(401);
+
+        String newAccessToken = authorizeAndExchange(client, clientId, newSecret, "profile");
+        assertThat(getBearer(newAccessToken, "/oidc/app/userinfo", null).statusCode()).isEqualTo(200);
+        String details = jdbc.queryForObject("SELECT details_json::text FROM ontology.og_audit_event "
+                + "WHERE event_type = 'APP_CLIENT_SECRET_ROTATED' AND actor_user_id = ? "
+                + "AND details_json->>'clientId' = ?", String.class, userId, clientId);
+        assertThat(details).doesNotContain(oldSecret, newSecret);
+    }
+
+    @Test
+    void nonAdminCannotChangeOAuthClientManagementState() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth authorization boundary probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        String clientId = mapper.readTree(created.body()).path("clientId").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+
+        CookieManager viewerCookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
+        java.net.http.HttpClient viewerClient = java.net.http.HttpClient.newBuilder().cookieHandler(viewerCookies)
+                .followRedirects(java.net.http.HttpClient.Redirect.NEVER).build();
+        String viewerCsrf = csrfToken(viewerClient);
+        HttpResponse<String> viewerLogin = postForm(viewerClient, "/auth/login", viewerCsrf,
+                List.of(Map.entry("username", viewerUsername), Map.entry("password", "test-only-" + viewerUserId)));
+        assertThat(viewerLogin.statusCode()).isEqualTo(200);
+        viewerCsrf = csrfToken(viewerClient);
+        assertThat(putJson(viewerClient, "/admin/oauth/clients/" + clientRecordId, viewerCsrf,
+                Map.of("displayName", "Not allowed", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile"))).statusCode()).isEqualTo(403);
+        assertThat(send(viewerClient, HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId
+                + "/enable")).header("X-CSRF-TOKEN", viewerCsrf)
+                .POST(HttpRequest.BodyPublishers.noBody()).build()).statusCode()).isEqualTo(403);
+        assertThat(send(viewerClient, HttpRequest.newBuilder(uri("/admin/oauth/clients/" + clientRecordId
+                + "/rotate-secret")).header("X-CSRF-TOKEN", viewerCsrf)
+                .POST(HttpRequest.BodyPublishers.noBody()).build()).statusCode()).isEqualTo(403);
+        assertThat(jdbc.queryForObject("SELECT display_name FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo("OAuth authorization boundary probe");
+    }
+
+    @Test
     void onlySystemAdministratorsCanReadAuditEvents() throws Exception {
         CookieManager viewerCookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         java.net.http.HttpClient viewerClient = java.net.http.HttpClient.newBuilder().cookieHandler(viewerCookies)
@@ -1001,9 +1205,26 @@ class AgentOAuthAuthorizationIntegrationTest {
 
     private HttpResponse<String> postJson(final String path, final String csrf, final Object body)
             throws IOException, InterruptedException {
-        return send(HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
+        return postJson(client, path, csrf, body);
+    }
+
+    private HttpResponse<String> postJson(final java.net.http.HttpClient sessionClient, final String path,
+            final String csrf, final Object body) throws IOException, InterruptedException {
+        return send(sessionClient, HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
                 .header("X-CSRF-TOKEN", csrf)
                 .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build());
+    }
+
+    private HttpResponse<String> putJson(final String path, final String csrf, final Object body)
+            throws IOException, InterruptedException {
+        return putJson(client, path, csrf, body);
+    }
+
+    private HttpResponse<String> putJson(final java.net.http.HttpClient sessionClient, final String path,
+            final String csrf, final Object body) throws IOException, InterruptedException {
+        return send(sessionClient, HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
+                .header("X-CSRF-TOKEN", csrf)
+                .PUT(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build());
     }
 
     private HttpResponse<String> send(final HttpRequest request) throws IOException, InterruptedException {

@@ -86,6 +86,44 @@ public class AgentClientRepository implements RegisteredClientRepository {
                 .stream().findFirst().orElse(null);
     }
 
+    /** 管理端写操作先锁定客户端行，保证配置与授权撤销在同一事务内按顺序完成。 */
+    public AppClientView lockAdminView(final String recordId) {
+        return jdbc.query("SELECT id, client_id, display_name, redirect_uri, scopes, enabled, create_time "
+                        + "FROM ontology.og_app_client WHERE id = ? FOR UPDATE",
+                (rs, rowNum) -> new AppClientView(rs.getString("id"), rs.getString("client_id"),
+                        rs.getString("display_name"), rs.getString("redirect_uri"),
+                        parseScopes(rs.getString("scopes")), rs.getBoolean("enabled"),
+                        rs.getTimestamp("create_time").toInstant()), recordId)
+                .stream().findFirst().orElse(null);
+    }
+
+    public AppClientView viewByRecordId(final String recordId) {
+        return jdbc.query("SELECT id, client_id, display_name, redirect_uri, scopes, enabled, create_time "
+                        + "FROM ontology.og_app_client WHERE id = ?",
+                (rs, rowNum) -> new AppClientView(rs.getString("id"), rs.getString("client_id"),
+                        rs.getString("display_name"), rs.getString("redirect_uri"),
+                        parseScopes(rs.getString("scopes")), rs.getBoolean("enabled"),
+                        rs.getTimestamp("create_time").toInstant()), recordId)
+                .stream().findFirst().orElse(null);
+    }
+
+    public void updateConfiguration(final String recordId, final String displayName,
+            final String redirectUri, final Set<String> scopes) {
+        jdbc.update("UPDATE ontology.og_app_client SET display_name = ?, redirect_uri = ?, scopes = ?, "
+                        + "update_time = NOW() WHERE id = ?",
+                displayName, redirectUri, String.join(" ", scopes.stream().sorted().toList()), recordId);
+    }
+
+    public void setEnabled(final String recordId, final boolean enabled) {
+        jdbc.update("UPDATE ontology.og_app_client SET enabled = ?, update_time = NOW() WHERE id = ?",
+                enabled, recordId);
+    }
+
+    public void updateSecretHash(final String recordId, final String secretHash) {
+        jdbc.update("UPDATE ontology.og_app_client SET client_secret_hash = ?, update_time = NOW() WHERE id = ?",
+                secretHash, recordId);
+    }
+
     public String clientIdForRecord(final String recordId) {
         return jdbc.query("SELECT client_id FROM ontology.og_app_client WHERE id = ?",
                 (rs, rowNum) -> rs.getString(1), recordId).stream().findFirst().orElse(null);

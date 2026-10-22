@@ -107,6 +107,9 @@ const auditEvents = Array.from({ length: 51 }, (_, index) => ({
 const calls = {
   userDisable: [],
   clientDisable: [],
+  clientEnable: [],
+  clientUpdate: [],
+  clientSecretRotation: [],
   audit: [],
   projectInvites: [],
   createdUser: 0,
@@ -115,6 +118,8 @@ const calls = {
 let failDisableOnce = true;
 let failUserCreateOnce = true;
 let failClientDisableOnce = true;
+let failClientUpdateOnce = true;
+let failClientSecretRotationOnce = true;
 let failClientCreateOnce = true;
 let failProjectInviteOnce = true;
 let projectInvitePersisted = false;
@@ -339,8 +344,43 @@ server = http.createServer((req, res) => {
           failClientDisableOnce = false;
           return route.abort("timedout");
         }
-        clients[0].enabled = false;
+        clients.find((client) => client.id === "c1").enabled = false;
         return response(route, 200, { status: "disabled" });
+      }
+      if (
+        endpoint.endsWith("/admin/oauth/clients/c2/enable") &&
+        request.method() === "POST"
+      ) {
+        calls.clientEnable.push(endpoint);
+        clients.find((client) => client.id === "c2").enabled = true;
+        return response(route, 200, { status: "enabled" });
+      }
+      if (
+        endpoint.endsWith("/admin/oauth/clients/c1") &&
+        request.method() === "PUT"
+      ) {
+        calls.clientUpdate.push(body);
+        const client = clients.find((item) => item.id === "c1");
+        Object.assign(client, body);
+        if (failClientUpdateOnce) {
+          failClientUpdateOnce = false;
+          return route.abort("timedout");
+        }
+        return response(route, 200, client);
+      }
+      if (
+        endpoint.endsWith("/admin/oauth/clients/c1/rotate-secret") &&
+        request.method() === "POST"
+      ) {
+        calls.clientSecretRotation.push(endpoint);
+        if (failClientSecretRotationOnce) {
+          failClientSecretRotationOnce = false;
+          return route.abort("timedout");
+        }
+        return response(route, 200, {
+          clientId: clients.find((client) => client.id === "c1").clientId,
+          clientSecret: "rotated-client-secret-once",
+        });
       }
       if (
         endpoint.endsWith("/organization/page") &&
@@ -695,8 +735,34 @@ server = http.createServer((req, res) => {
       await detailDrawer.getByLabel("完整回调地址").inputValue(),
       /disabled\.example\.com/
     );
-    await page.keyboard.press("Escape");
+    await detailDrawer.getByRole("button", { name: "启用客户端" }).click();
+    const enableDialog = page
+      .getByRole("dialog")
+      .filter({ hasText: "不会恢复已撤销的用户授权" });
+    await enableDialog.getByRole("button", { name: "确认启用" }).click();
+    await disabledClientRow.getByText("已启用").waitFor();
+    assert.equal(calls.clientEnable.length, 1, "enable is confirmed once");
+    await detailDrawer.locator(".ant-drawer-close").click();
     await detailDrawer.waitFor({ state: "hidden" });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page
+      .getByRole("columnheader", { name: "Client ID" })
+      .waitFor({ state: "hidden" });
+    const compactTableWidths = await page
+      .locator(".ant-table-content")
+      .evaluate((element) => ({
+        client: element.clientWidth,
+        scroll: element.scrollWidth,
+      }));
+    assert.ok(
+      compactTableWidths.scroll <= compactTableWidths.client + 1,
+      `390px table must not force horizontal scrolling: ${JSON.stringify(
+        compactTableWidths
+      )}`
+    );
+    await page.setViewportSize({ width: 1440, height: 900 });
+
     const activeClientRow = page
       .getByRole("row")
       .filter({ hasText: "Workbench Ontology" });
@@ -713,9 +779,70 @@ server = http.createServer((req, res) => {
       await activeDetail.getByLabel("完整 Client ID").inputValue(),
       /long_suffix/
     );
-    await page.keyboard.press("Escape");
+    await activeDetail.getByRole("button", { name: "编辑配置" }).click();
+    const editClientDialog = page
+      .getByRole("dialog")
+      .filter({ hasText: "编辑 OAuth 客户端配置" });
+    assert.equal(
+      await editClientDialog.getByLabel("Client ID").count(),
+      0,
+      "stable client ID is not exposed as an editable field"
+    );
+    await editClientDialog
+      .getByLabel("应用名称")
+      .fill("Workbench Ontology 更新");
+    await editClientDialog.getByRole("button", { name: "保存配置" }).click();
+    await editClientDialog
+      .getByRole("alert")
+      .getByRole("button", { name: "刷新并核对配置" })
+      .click();
+    await editClientDialog.waitFor({ state: "hidden" });
+    assert.equal(
+      calls.clientUpdate.length,
+      1,
+      "an unknown edit outcome is read back and not automatically replayed"
+    );
+    assert.equal(calls.clientUpdate[0].displayName, "Workbench Ontology 更新");
+    await activeDetail
+      .getByRole("button", { name: "轮换 Client Secret" })
+      .click();
+    const rotateDialog = page
+      .getByRole("dialog")
+      .filter({ hasText: "旧 Secret 会立即失效" });
+    await rotateDialog.getByRole("button", { name: "确认轮换" }).click();
+    await rotateDialog
+      .locator(".ant-alert-error")
+      .filter({ hasText: "旧 Secret 可能已经失效" })
+      .waitFor();
+    assert.equal(
+      calls.clientSecretRotation.length,
+      1,
+      "an unknown rotation outcome is not automatically replayed"
+    );
+    await rotateDialog
+      .getByRole("button", { name: "再次轮换并生成新 Secret" })
+      .click();
+    const rotatedDialog = page
+      .getByRole("dialog")
+      .filter({ hasText: "新 Client Secret（仅此一次）" });
+    await rotatedDialog.waitFor();
+    assert.equal(
+      await rotatedDialog.getByLabel("Client Secret").inputValue(),
+      "rotated-client-secret-once"
+    );
+    assert.equal(
+      calls.clientSecretRotation.length,
+      2,
+      "rotation repeats only after an explicit user action"
+    );
+    await rotatedDialog.getByRole("button", { name: "已保存，关闭" }).click();
+    await rotatedDialog.waitFor({ state: "detached" });
+    await activeDetail.locator(".ant-drawer-close").click();
     await activeDetail.waitFor({ state: "hidden" });
-    await activeClientRow.getByRole("button", { name: "停用客户端" }).click();
+    const renamedClientRow = page
+      .getByRole("row")
+      .filter({ hasText: "Workbench Ontology 更新" });
+    await renamedClientRow.getByRole("button", { name: "停用" }).click();
     const disableClientDialog = page
       .getByRole("dialog")
       .filter({ hasText: "撤销该客户端当前所有用户授权" });
@@ -745,7 +872,7 @@ server = http.createServer((req, res) => {
     await disableClientDialog
       .getByRole("button", { name: "停用客户端" })
       .click();
-    await activeClientRow.getByText("已停用").waitFor();
+    await renamedClientRow.getByText("已停用").waitFor();
     assert.equal(
       calls.clientDisable.length,
       2,
