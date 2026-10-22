@@ -1,29 +1,29 @@
 .page {
   box-sizing: border-box;
   width: 100%;
-  max-width: 1440px;
+  max-width: none;
   min-width: 0;
-  margin: 0 auto;
-  padding: 24px 24px 20px;
+  margin: 0;
+  padding: var(--wb-page-margin, 16px);
 }
 
 .breadcrumb {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
+  gap: 16px;
   min-width: 0;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .title {
   min-width: 0;
   margin: 0 !important;
-  font-size: 24px !important;
+  font-size: 20px !important;
   line-height: 1.35 !important;
 }
 
@@ -34,7 +34,7 @@
 
 @media (max-width: 640px) {
   .page {
-    padding: 16px 16px 20px;
+    padding: var(--wb-page-margin, 16px);
   }
 
   .header {

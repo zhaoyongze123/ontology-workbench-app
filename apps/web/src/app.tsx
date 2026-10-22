@@ -1,9 +1,15 @@
+import '@fontsource/inter/latin-400.css';
+import '@fontsource/inter/latin-500.css';
+import '@fontsource/inter/latin-600.css';
+import '@fontsource/inter/latin-700.css';
 import { RunTimeLayoutConfig, history } from '@umijs/max';
 import { App, ConfigProvider, message } from 'antd';
 import { appRelativePath } from './config/appBase';
 import { csrfRequestOptions } from './features/auth/csrf';
 import { normalizeApiError } from './features/errors/apiError';
 import { shouldRequestProblemDetails } from './features/errors/requestContract';
+import './theme/workbench.less';
+import { applyWorkbenchCssVariables, workbenchAntTheme } from './theme/workbenchTheme';
 
 /** 运行时配置 */
 export const layout: RunTimeLayoutConfig = () => {
@@ -122,17 +128,9 @@ export const request = {
 
 /** 全局包裹组件，提供App Context */
 export function rootContainer(container: React.ReactNode) {
+  applyWorkbenchCssVariables();
   return (
-    <ConfigProvider
-      theme={{
-        token: {
-          colorLink: '#570CF4',
-          colorLinkActive: '#570CF4',
-          colorLinkHover: '#570cf482',
-          colorPrimary: '#570CF4',
-        },
-      }}
-    >
+    <ConfigProvider theme={workbenchAntTheme}>
       <App>{container}</App>
     </ConfigProvider>
   );
