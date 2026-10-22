@@ -125,14 +125,14 @@ if mode == "create":
     assert status == 200 and api_succeeded(node_result), "AGE 图谱节点写入失败"
 elif mode == "verify":
     status, projects, _ = browser.request(
-        "/organization/page?keyword=" + urllib.parse.quote(project_name), origin=trusted_origin
+        "/organization/page?pageNum=1&pageSize=20&keyword=" + urllib.parse.quote(project_name), origin=trusted_origin
     )
     assert status == 200 and api_succeeded(projects), "读取恢复后的项目失败"
     project_rows = [row for row in projects.get("data", []) if row.get("name") == project_name]
     assert len(project_rows) == 1, "恢复后未找到唯一测试项目"
     project_id = project_rows[0]["id"]
     status, graphs, _ = browser.request(
-        "/graph/page?graphType=ONTOLOGY&organizationId=" + urllib.parse.quote(str(project_id)),
+        "/graph/page?pageNum=1&pageSize=20&graphType=ONTOLOGY&organizationId=" + urllib.parse.quote(str(project_id)),
         origin=trusted_origin,
     )
     assert status == 200 and api_succeeded(graphs), "读取恢复后的图谱失败"
