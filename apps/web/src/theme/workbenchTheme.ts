@@ -1,5 +1,15 @@
 import type { ThemeConfig } from 'antd';
 
+const workbenchLayoutTokens = {
+  radius: 10,
+  radiusControl: 8,
+  radiusCard: 14,
+  pageMargin: 16,
+  cardPadding: 16,
+  formGap: 16,
+  actionGap: 8,
+} as const;
+
 /**
  * Workbench 设计变量适配层。
  * CSS 变量保留样例中的 OKLCH 值；Ant Design 使用等效中性色，避免颜色生成器
@@ -26,13 +36,13 @@ export const workbenchCssVariables = {
     "'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'",
   '--wb-font-mono':
     'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-  '--wb-radius': '10px',
-  '--wb-radius-control': '8px',
-  '--wb-radius-card': '14px',
-  '--wb-page-margin': '16px',
-  '--wb-card-padding': '16px',
-  '--wb-form-gap': '16px',
-  '--wb-action-gap': '8px',
+  '--wb-radius': `${workbenchLayoutTokens.radius}px`,
+  '--wb-radius-control': `${workbenchLayoutTokens.radiusControl}px`,
+  '--wb-radius-card': `${workbenchLayoutTokens.radiusCard}px`,
+  '--wb-page-margin': `${workbenchLayoutTokens.pageMargin}px`,
+  '--wb-card-padding': `${workbenchLayoutTokens.cardPadding}px`,
+  '--wb-form-gap': `${workbenchLayoutTokens.formGap}px`,
+  '--wb-action-gap': `${workbenchLayoutTokens.actionGap}px`,
 } as const;
 
 /** Ant Design 5 主题值与上方 CSS 变量按样例的中性色阶一一对应。 */
@@ -64,9 +74,9 @@ export const workbenchAntTheme: ThemeConfig = {
     fontSizeHeading3: 16,
     fontSizeHeading4: 14,
     lineHeight: 1.5,
-    borderRadius: 10,
-    borderRadiusSM: 8,
-    borderRadiusLG: 14,
+    borderRadius: workbenchLayoutTokens.radius,
+    borderRadiusSM: workbenchLayoutTokens.radiusControl,
+    borderRadiusLG: workbenchLayoutTokens.radiusCard,
   },
   components: {
     Layout: {
@@ -81,6 +91,10 @@ export const workbenchAntTheme: ThemeConfig = {
       itemHoverColor: '#0a0a0a',
       itemSelectedBg: '#e8e8e8',
       itemSelectedColor: '#0a0a0a',
+    },
+    Card: {
+      bodyPadding: workbenchLayoutTokens.cardPadding,
+      bodyPaddingSM: workbenchLayoutTokens.cardPadding,
     },
   },
 };
