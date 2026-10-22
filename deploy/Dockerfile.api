@@ -28,7 +28,7 @@ COPY deploy/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
 COPY deploy/ontology-migrate-entrypoint.sh /usr/local/bin/ontology-migrate
 RUN chmod 755 /usr/local/bin/api-entrypoint.sh /usr/local/bin/ontology-migrate \
     && test -x /opt/flyway/flyway \
-    && test -f /opt/ontology/flyway/sql/V0.0.1__init.sql
+    && test -f /opt/ontology/flyway/sql/V0.0.1__init_database.sql
 EXPOSE 13001
 ENTRYPOINT ["/usr/local/bin/api-entrypoint.sh"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 CMD curl -fsS -o /dev/null http://127.0.0.1:13001/api/v1/auth/csrf

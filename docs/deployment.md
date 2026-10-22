@@ -37,7 +37,7 @@
      "schemaVersion": 1,
      "username": "admin",
      "displayName": "System Administrator",
-     "password": "替换为至少12位且不同于用户名的随机强密码"
+     "password": "<至少12位的随机强密码>"
    }
    JSON
    chmod 600 deploy/private/bootstrap-input/bootstrap-admin.json
