@@ -2,7 +2,7 @@ services:
   db:
     image: ${IMAGE_PREFIX:-ontology}/ontology-db:${IMAGE_TAG:?请设置固定发布版本 IMAGE_TAG}
     environment:
-      POSTGRES_DB: ontology
+      POSTGRES_DB: ${DATABASE_NAME:-ontology}
       POSTGRES_USER: ontology_admin
       POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
     secrets:
@@ -66,7 +66,7 @@ services:
     profiles: [tools]
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
-    command: ["export FLYWAY_URL=jdbc:postgresql://db:5432/ontology FLYWAY_USER=ontology_migrator FLYWAY_PASSWORD=\"$(cat /run/secrets/migrator_db_password)\"; flyway -locations=filesystem:/flyway/sql migrate"]
+    command: ["export FLYWAY_URL=jdbc:postgresql://db:5432/${DATABASE_NAME:-ontology} FLYWAY_USER=ontology_migrator FLYWAY_PASSWORD=\"$(cat /run/secrets/migrator_db_password)\"; flyway -locations=filesystem:/flyway/sql migrate"]
     secrets: [migrator_db_password]
     environment:
       FLYWAY_SCHEMAS: ontology
@@ -81,7 +81,7 @@ services:
     image: ${IMAGE_PREFIX:-ontology}/ontology-api:${IMAGE_TAG:?请设置固定发布版本 IMAGE_TAG}
     profiles: [tools]
     entrypoint: ["java", "-jar", "/opt/ontology/app.jar"]
-    command: ["--spring.profiles.active=bootstrap", "--ontology.bootstrap.apply=true", "--spring.main.web-application-type=none", "--ontology.bootstrap.mode=production", "--ontology.bootstrap.file=/run/bootstrap-input/bootstrap-admin.json", "--spring.config.import=optional:configtree:/run/secrets/bootstrap/"]
+    command: ["--spring.profiles.active=bootstrap,multiuser", "--ontology.bootstrap.apply=true", "--spring.main.web-application-type=none", "--ontology.bootstrap.mode=production", "--ontology.bootstrap.file=/run/bootstrap-input/bootstrap-admin.json", "--spring.config.import=optional:configtree:/run/secrets/bootstrap/"]
     environment:
       SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.boot.autoconfigure.neo4j.Neo4jAutoConfiguration,org.springframework.boot.autoconfigure.data.neo4j.Neo4jDataAutoConfiguration,org.springframework.boot.autoconfigure.data.neo4j.Neo4jRepositoriesAutoConfiguration
     volumes:

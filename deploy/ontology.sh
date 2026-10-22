@@ -13,6 +13,15 @@ usage() {
 用法: deploy/ontology.sh <init-config|pull|up|migrate|init-admin|status|logs|backup|restore|down|package-app>
 EOF
 }
+configured_database() {
+  database=$(sed -n 's/^DATABASE_NAME=//p' "$DEPLOY/.env" | tail -n 1)
+  database=${database:-ontology}
+  case "$database" in ''|*[!A-Za-z0-9_]*)
+    echo 'DATABASE_NAME 仅允许字母、数字和下划线' >&2; exit 2;;
+  esac
+  [ "${#database}" -le 63 ] || { echo 'DATABASE_NAME 不能超过 63 个字符' >&2; exit 2; }
+  printf '%s' "$database"
+}
 need_config() {
   [ -f "$DEPLOY/.env" ] || { echo '请先运行 init-config 并编辑 deploy/.env' >&2; exit 2; }
   image_tag=$(sed -n 's/^IMAGE_TAG=//p' "$DEPLOY/.env" | tail -n 1)
@@ -26,6 +35,14 @@ need_config() {
     echo 'PUBLIC_ORIGIN 已变化；请重新运行 init-config 同步运行配置' >&2
     exit 2
   fi
+  database=$(configured_database)
+  expected_jdbc="jdbc:postgresql://db:5432/$database?currentSchema=ontology"
+  for config in "$PRIVATE/api-config/spring.datasource.url" "$PRIVATE/bootstrap-config/spring.datasource.url"; do
+    if [ -f "$config" ] && [ "$(cat "$config")" != "$expected_jdbc" ]; then
+      echo 'DATABASE_NAME 已变化；请运行 init-config 同步 JDBC 配置' >&2
+      exit 2
+    fi
+  done
 }
 ensure_oidc_config() {
   oidc_enabled=$(cat "$PRIVATE/api-config/ontology.workbench.enabled" 2>/dev/null || printf 'false')
@@ -40,7 +57,8 @@ ensure_oidc_config() {
   esac
 }
 db_admin_psql() {
-  compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)" ONTOLOGY_DB_USER=ontology_runtime ONTOLOGY_DB_PASSWORD="$(cat /run/secrets/runtime_db_password)" ONTOLOGY_MIGRATOR_PASSWORD="$(cat /run/secrets/migrator_db_password)" ONTOLOGY_BOOTSTRAP_DB_USER=ontology_bootstrap ONTOLOGY_BOOTSTRAP_DB_PASSWORD="$(cat /run/secrets/bootstrap_db_password)"; exec psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U ontology_admin -d ontology' < "$1"
+  database=$1 sql_file=$2
+  compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)" ONTOLOGY_DB_USER=ontology_runtime ONTOLOGY_DB_PASSWORD="$(cat /run/secrets/runtime_db_password)" ONTOLOGY_MIGRATOR_PASSWORD="$(cat /run/secrets/migrator_db_password)" ONTOLOGY_BOOTSTRAP_DB_USER=ontology_bootstrap ONTOLOGY_BOOTSTRAP_DB_PASSWORD="$(cat /run/secrets/bootstrap_db_password)"; exec psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U ontology_admin -d "$1"' sh "$database" < "$sql_file"
 }
 command=${1:-}
 shift || true
@@ -62,7 +80,8 @@ case "$command" in
       chmod 600 "$PRIVATE/$name"
     done
     umask 077
-    printf '%s' "jdbc:postgresql://db:5432/ontology?currentSchema=ontology" > "$PRIVATE/api-config/spring.datasource.url"
+    database=$(configured_database)
+    printf '%s' "jdbc:postgresql://db:5432/$database?currentSchema=ontology" > "$PRIVATE/api-config/spring.datasource.url"
     printf '%s' ontology_runtime > "$PRIVATE/api-config/spring.datasource.username"
     cp "$PRIVATE/runtime-db-password" "$PRIVATE/api-config/spring.datasource.password"
     printf '%s' "$origin" > "$PRIVATE/api-config/ontology.security.public-origin"
@@ -81,7 +100,7 @@ case "$command" in
     printf '%s' 'https://app.workbench.aos.work/basilcraw/api/oidc/jwks' > "$PRIVATE/api-config/ontology.workbench.jwks-uri"
     printf '%s' post > "$PRIVATE/api-config/ontology.workbench.client-auth-method"
     printf '%s/oidc/callback' "$origin" > "$PRIVATE/api-config/ontology.workbench.redirect-uri"
-    printf '%s' 'jdbc:postgresql://db:5432/ontology?currentSchema=ontology' > "$PRIVATE/bootstrap-config/spring.datasource.url"
+    printf '%s' "jdbc:postgresql://db:5432/$database?currentSchema=ontology" > "$PRIVATE/bootstrap-config/spring.datasource.url"
     printf '%s' ontology_bootstrap > "$PRIVATE/bootstrap-config/spring.datasource.username"
     cp "$PRIVATE/bootstrap-db-password" "$PRIVATE/bootstrap-config/spring.datasource.password"
     printf '%s' false > "$PRIVATE/bootstrap-config/spring.flyway.enabled"
@@ -91,13 +110,20 @@ case "$command" in
     printf '%s\n' '配置目录已初始化；请编辑 deploy/.env 的 PUBLIC_ORIGIN，并妥善保管 deploy/private/。'
     ;;
   pull) need_config; compose --profile tools pull ;;
-  up) need_config; ensure_oidc_config; compose up -d db api web ;;
+  up)
+    need_config
+    ensure_oidc_config
+    compose up -d db
+    # init-config 会重写私有 JDBC 文件；重建 API 才会重新读取并切换目标库。
+    compose up -d --force-recreate api web
+    ;;
   migrate)
     need_config
     compose up -d --wait --wait-timeout 120 db
-    db_admin_psql "$DEPLOY/local/prepare-db-roles.sql"
+    database=$(configured_database)
+    db_admin_psql "$database" "$DEPLOY/local/prepare-db-roles.sql"
     compose --profile tools run --rm migrate
-    db_admin_psql "$DEPLOY/local/finalize-db-permissions.sql"
+    db_admin_psql "$database" "$DEPLOY/local/finalize-db-permissions.sql"
     ;;
   init-admin)
     need_config
@@ -121,7 +147,8 @@ case "$command" in
     [ ! -e "$temporary" ] || { echo '备份临时文件已存在' >&2; exit 2; }
     umask 077
     trap 'unlink "$temporary" 2>/dev/null || true' EXIT HUP INT TERM
-    compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; exec pg_dump -h 127.0.0.1 -Fc -U ontology_admin -d ontology' > "$temporary"
+    database=$(configured_database)
+    compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; exec pg_dump -h 127.0.0.1 -Fc -U ontology_admin -d "$1"' sh "$database" > "$temporary"
     chmod 600 "$temporary"
     mv "$temporary" "$destination"
     trap - EXIT HUP INT TERM
@@ -131,13 +158,17 @@ case "$command" in
     need_config
     [ "$#" -eq 2 ] || { echo '用法: restore <备份文件> <全新目标数据库名>' >&2; exit 2; }
     backup=$1 target=$2
-    case "$target" in ontology|postgres|template0|template1|'') echo '目标必须是独立的新数据库名' >&2; exit 2;; esac
+    source_database=$(configured_database)
+    case "$target" in "$source_database"|postgres|template0|template1|'') echo '目标必须是当前源库以外的独立新数据库' >&2; exit 2;; esac
     case "$target" in *[!a-zA-Z0-9_]* ) echo '目标数据库名只允许字母、数字和下划线' >&2; exit 2;; esac
     [ -f "$backup" ] || { echo '备份文件不存在' >&2; exit 2; }
+    compose up -d --wait --wait-timeout 120 db
     exists=$(compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; psql -h 127.0.0.1 -At -U ontology_admin -d postgres -c "SELECT 1 FROM pg_database WHERE datname = '\''$1'\''"' sh "$target")
     [ -z "$exists" ] || { echo '目标数据库已存在；恢复只允许新建独立目标' >&2; exit 2; }
     compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; createdb -h 127.0.0.1 -U ontology_admin "$1"' sh "$target"
     compose exec --user 0 -T db sh -ec 'export PGPASSWORD="$(cat /run/secrets/db_admin_password)"; exec pg_restore --exit-on-error -h 127.0.0.1 -U ontology_admin -d "$1"' sh "$target" < "$backup"
+    db_admin_psql "$target" "$DEPLOY/local/prepare-db-roles.sql"
+    db_admin_psql "$target" "$DEPLOY/local/finalize-db-permissions.sql"
     ;;
   down) need_config; compose down ;;
   package-app)
