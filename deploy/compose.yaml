@@ -93,6 +93,8 @@ services:
   package:
     image: ${IMAGE_PREFIX:-ontology}/ontology-package:${IMAGE_TAG:?请设置固定发布版本 IMAGE_TAG}
     profiles: [tools]
+    environment:
+      ONTOLOGY_PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?请设置 PUBLIC_ORIGIN}
     volumes:
       - ./private/package.json:/run/config.json:ro
       - ./private/package-output:/output

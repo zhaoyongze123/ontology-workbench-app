@@ -70,6 +70,9 @@ class DeploymentContracts(unittest.TestCase):
         self.assertIn('"$request_method $uri"', nginx)
         self.assertNotIn("$request ", nginx)
         self.assertNotIn("$args", nginx)
+        self.assertIn("location = /index.html", nginx)
+        self.assertIn("internal;", nginx)
+        self.assertIn("expires -1;", nginx)
 
     def test_build_images_use_verified_node_22_and_cached_reactor_build(self):
         web_dockerfile = (ROOT / "deploy/Dockerfile.web").read_text()
@@ -80,11 +83,13 @@ class DeploymentContracts(unittest.TestCase):
         self.assertNotIn("dependency:go-offline", api_dockerfile)
         self.assertIn("https://deb.debian.org", db_dockerfile)
         self.assertIn("Acquire::Retries=3", db_dockerfile)
+        self.assertIn("COPY --from=node:22.23.4-alpine3.24@sha256:ce8d97f7cfc7c5386421eb932df20a29df99b1a7f469f6157d5c9956702ffadc /etc/ssl/cert.pem", db_dockerfile)
 
     def test_database_name_is_shared_and_restore_reapplies_database_permissions(self):
         compose = COMPOSE["services"]
         self.assertEqual(compose["db"]["environment"]["POSTGRES_DB"], "${DATABASE_NAME:-ontology}")
         self.assertIn("${DATABASE_NAME:-ontology}", compose["migrate"]["command"][0])
+        self.assertEqual(compose["package"]["environment"]["ONTOLOGY_PUBLIC_ORIGIN"], "${PUBLIC_ORIGIN:?请设置 PUBLIC_ORIGIN}")
         script = (ROOT / "deploy/ontology.sh").read_text()
         self.assertIn("DATABASE_NAME", (ROOT / "deploy/.env.example").read_text())
         self.assertIn('"$database" "$DEPLOY/local/prepare-db-roles.sql"', script)
