@@ -227,6 +227,15 @@ class DatabasePrivilegesIntegrationTest {
 
     @Test
     void runtimeCanManageOntologyGraphsOnlyThroughConstrainedOwnerFunctions() {
+        // SECURITY DEFINER 会覆盖连接会话的 search_path；受限函数自身必须包含 AGE 的目录 schema。
+        assertThat(runtimeJdbc.queryForObject("SELECT p.proconfig @> ARRAY['search_path=pg_catalog, ag_catalog']::TEXT[] "
+                + "FROM pg_catalog.pg_proc p "
+                + "WHERE p.oid = 'ontology.create_age_graph(text)'::pg_catalog.regprocedure", Boolean.class))
+                .isTrue();
+        assertThat(runtimeJdbc.queryForObject(
+                "SELECT pg_catalog.has_schema_privilege('ontology_age_graph_maintainer', 'ontology', 'CREATE')",
+                Boolean.class)).isFalse();
+
         String graphName = "ontology" + System.currentTimeMillis();
         String probeLabel = "future_label_" + UUID.randomUUID().toString().replace("-", "");
         String probeFunction = "future_fn_" + UUID.randomUUID().toString().replace("-", "");
