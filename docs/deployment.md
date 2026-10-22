@@ -29,9 +29,9 @@
 
 Compose 默认仅将 web 绑定到本机回环地址。由外部 Nginx、Caddy 或企业网关终止 TLS，并将请求转发到该回环地址；反代必须保留 Host，并正确设置 `X-Forwarded-For`。`EDGE_TRUSTED_PROXY_CIDRS` 只列外部 HTTPS 网关连接到 web 时可见的来源网段；`API_TRUSTED_PROXY_REGEX` 只信任内部 web 容器地址（模板默认 `172.30.0.10`）。不能信任任意客户端传入的转发头。外部访问地址必须使用最终 HTTPS Origin。
 
-生产 Cookie 使用 Secure，并为跨站 Workbench iframe 场景配置 `SameSite=None`；浏览器对第三方 Cookie 的限制仍需在目标 Workbench 环境实测。仅本机隔离验收使用 HTTP 时，才按 `deploy/` 模板将 Secure 关闭并设为 `SameSite=Lax`，不要把该配置用于公网。
+生产 Cookie 使用 Secure，并为跨站 Workbench iframe 场景配置 `SameSite=None`；`init-config` 不会生成 Cookie 覆盖文件。仅本机 HTTP smoke 可在私有 `api-config` 中额外创建 `ontology.security.cookie-secure=false` 和 `ontology.security.cookie-same-site=Lax`，生产 HTTPS 环境不得创建这两个文件。浏览器对第三方 Cookie 的限制仍需在目标 Workbench 环境实测。
 
-Workbench OIDC 配置需要一组由 Workbench 管理员签发的 Client ID 和 Client Secret；服务端凭据放在私有配置中，回调 URI 必须与平台登记值逐字一致。Ontology Agent OAuth 另有一组客户端凭据，用于 Agent 对 Ontology API 的授权；按 App manifest 提供的授权/Token/回调地址在 Workbench 注册。两组 Client Secret 均不得写进前端变量、镜像、部署包或日志。完成配置后重新生成并上传 App 包，并在真实 Workbench 中验证登录、嵌入 Cookie 和 Agent 授权；本地启动不代表平台验收完成。
+Workbench OIDC 配置需要一组由 Workbench 管理员签发的 Client ID 和 Client Secret；服务端凭据放在 `deploy/private/api-config/`，回调 URI 必须与平台登记值逐字一致。Ontology App OAuth 另有一组 Java Admin 签发的 App client 凭据：App `clientSecret` 必须位于管理员上传 ZIP 根级 `oauth-clients.yaml`，按受限管理员资料管理；上游 Workbench OIDC secret 绝不能进入 App ZIP。两组 secret 均不得进入前端变量、Docker 镜像、deployment bundle 或日志。部署域名只在 `.env` 设置 `PUBLIC_ORIGIN`，`package-app` 会将该值传给 package 镜像并覆盖私有 JSON 中的 service origin。完成配置后生成并上传 App 包，并在真实 Workbench 中验证登录、嵌入 Cookie 和 Agent 授权；本地部署不代表平台验收完成。
 
 ## 升级、备份与恢复
 
