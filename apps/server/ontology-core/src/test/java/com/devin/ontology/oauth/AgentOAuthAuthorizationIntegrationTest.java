@@ -1,9 +1,11 @@
 package com.devin.ontology.oauth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.devin.ontology.security.LoginUserPrincipal;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.net.CookieManager;
@@ -21,6 +23,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -32,7 +37,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -57,6 +70,15 @@ class AgentOAuthAuthorizationIntegrationTest {
 
     @Autowired
     private ObjectMapper mapper;
+
+    @Autowired
+    private AgentClientRepository clientRepository;
+
+    @Autowired
+    private DigestOAuth2AuthorizationService authorizationService;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     private CookieManager cookies;
     private java.net.http.HttpClient client;
@@ -493,6 +515,92 @@ class AgentOAuthAuthorizationIntegrationTest {
                 String.class, clientRecordId)).isEqualTo(REDIRECT_URI);
         assertThat(jdbc.queryForObject("SELECT scopes FROM ontology.og_app_client WHERE id = ?",
                 String.class, clientRecordId)).isEqualTo("ontology.read profile");
+    }
+
+    @Test
+    void authorizationCreationRechecksClientConfigurationAfterWaitingForAdminLock() throws Exception {
+        String csrf = csrfToken();
+        HttpResponse<String> login = postForm("/auth/login", csrf,
+                List.of(Map.entry("username", username), Map.entry("password", "test-only-" + userId)));
+        assertThat(login.statusCode()).isEqualTo(200);
+
+        csrf = csrfToken();
+        HttpResponse<String> created = postJson("/admin/oauth/clients", csrf,
+                Map.of("displayName", "OAuth concurrent update probe", "redirectUri", REDIRECT_URI,
+                        "scopes", List.of("profile")));
+        assertThat(created.statusCode()).isEqualTo(200);
+        String clientId = mapper.readTree(created.body()).path("clientId").asText();
+        clientRecordId = jdbc.queryForObject("SELECT id FROM ontology.og_app_client WHERE client_id = ?",
+                String.class, clientId);
+
+        // 模拟授权请求先读到旧客户端，随后管理员持锁修改回调地址并撤销旧授权。
+        RegisteredClient staleClient = clientRepository.findById(clientRecordId);
+        Instant loginAt = Instant.now();
+        LoginUserPrincipal principal = new LoginUserPrincipal(userId, username,
+                "OAuth integration admin", true,
+                jdbc.queryForObject("SELECT auth_version FROM ontology.og_user WHERE id = ?", Long.class, userId),
+                loginAt.toEpochMilli());
+        var authentication = UsernamePasswordAuthenticationToken.authenticated(principal, null,
+                List.of(new SimpleGrantedAuthority("ROLE_SYSTEM_ADMIN")));
+        OAuth2AuthorizationRequest staleRequest = OAuth2AuthorizationRequest.authorizationCode()
+                .authorizationUri(PUBLIC_ORIGIN + "api/v1/oidc/app/authorize")
+                .clientId(clientId).redirectUri(REDIRECT_URI).scopes(Set.of("profile"))
+                .state("stale-authorization-" + UUID.randomUUID()).build();
+        OAuth2Authorization staleAuthorization = OAuth2Authorization.withRegisteredClient(staleClient)
+                .id(UUID.randomUUID().toString()).principalName(userId)
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .authorizedScopes(Set.of("profile"))
+                .attribute(java.security.Principal.class.getName(), authentication)
+                .attribute(OpaqueOAuth2TokenGenerator.LOGIN_AT_ATTRIBUTE, loginAt)
+                .attribute(OpaqueOAuth2TokenGenerator.ABSOLUTE_EXPIRY_ATTRIBUTE, loginAt.plus(Duration.ofHours(8)))
+                .attribute(OAuth2AuthorizationRequest.class.getName(), staleRequest)
+                .build();
+
+        CountDownLatch adminHasLock = new CountDownLatch(1);
+        CountDownLatch allowAdminCommit = new CountDownLatch(1);
+        CountDownLatch authorizationSaveStarted = new CountDownLatch(1);
+        CompletableFuture<Void> adminUpdate = CompletableFuture.runAsync(() ->
+                new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                    assertThat(clientRepository.lockForUpdate(clientRecordId)).isNotNull();
+                    adminHasLock.countDown();
+                    try {
+                        if (!allowAdminCommit.await(5, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException("等待 OAuth 并发测试释放客户端锁超时");
+                        }
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("OAuth 并发测试被中断", interrupted);
+                    }
+                    clientRepository.updateConfiguration(clientRecordId, "OAuth concurrent update probe",
+                            "https://app.example.test/updated-callback", Set.of("profile"));
+                    jdbc.update("UPDATE ontology.og_app_authorization SET revoked_at = NOW(), "
+                                    + "access_active = FALSE WHERE client_record_id = ?",
+                            clientRecordId);
+                    jdbc.update("DELETE FROM ontology.og_app_authorization_consent WHERE client_record_id = ?",
+                            clientRecordId);
+                }));
+        assertThat(adminHasLock.await(5, TimeUnit.SECONDS)).isTrue();
+
+        CompletableFuture<Void> staleSave = CompletableFuture.runAsync(() -> {
+            authorizationSaveStarted.countDown();
+            authorizationService.save(staleAuthorization);
+        });
+        try {
+            assertThat(authorizationSaveStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            // 若授权没有参与客户端行锁，这次保存会越过管理员事务并留下旧回调地址授权。
+            assertThatThrownBy(() -> staleSave.get(250, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(TimeoutException.class);
+        } finally {
+            allowAdminCommit.countDown();
+        }
+        adminUpdate.get(5, TimeUnit.SECONDS);
+        assertThatThrownBy(() -> staleSave.get(5, TimeUnit.SECONDS))
+                .isInstanceOf(ExecutionException.class)
+                .hasCauseInstanceOf(org.springframework.security.oauth2.core.OAuth2AuthorizationException.class);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ontology.og_app_authorization WHERE id = ?",
+                Long.class, staleAuthorization.getId())).isZero();
+        assertThat(jdbc.queryForObject("SELECT redirect_uri FROM ontology.og_app_client WHERE id = ?",
+                String.class, clientRecordId)).isEqualTo("https://app.example.test/updated-callback");
     }
 
     @Test

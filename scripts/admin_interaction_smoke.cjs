@@ -361,11 +361,18 @@ server = http.createServer((req, res) => {
       ) {
         calls.clientUpdate.push(body);
         const client = clients.find((item) => item.id === "c1");
-        Object.assign(client, body);
         if (failClientUpdateOnce) {
           failClientUpdateOnce = false;
+          // 模拟另一位管理员在结果核对前更新了配置，表单应回填这份当前事实。
+          Object.assign(client, {
+            displayName: "由其他管理员更新",
+            redirectUri:
+              "https://workbench.example.com/ontology/oauth/new-callback",
+            scopes: ["profile", "ontology.read"],
+          });
           return route.abort("timedout");
         }
+        Object.assign(client, body);
         return response(route, 200, client);
       }
       if (
@@ -796,6 +803,20 @@ server = http.createServer((req, res) => {
       .getByRole("alert")
       .getByRole("button", { name: "刷新并核对配置" })
       .click();
+    await editClientDialog
+      .getByRole("alert")
+      .filter({ hasText: "表单已更新为服务端当前配置" })
+      .waitFor();
+    assert.equal(
+      await editClientDialog.getByLabel("应用名称").inputValue(),
+      "由其他管理员更新",
+      "uncertain edit conflict must use the refreshed server value, not the attempted stale value"
+    );
+    assert.equal(
+      await editClientDialog.getByLabel("回调地址").inputValue(),
+      "https://workbench.example.com/ontology/oauth/new-callback"
+    );
+    await editClientDialog.locator(".ant-modal-close").click();
     await editClientDialog.waitFor({ state: "hidden" });
     assert.equal(
       calls.clientUpdate.length,
@@ -841,7 +862,7 @@ server = http.createServer((req, res) => {
     await activeDetail.waitFor({ state: "hidden" });
     const renamedClientRow = page
       .getByRole("row")
-      .filter({ hasText: "Workbench Ontology 更新" });
+      .filter({ hasText: "由其他管理员更新" });
     await renamedClientRow.getByRole("button", { name: "停用" }).click();
     const disableClientDialog = page
       .getByRole("dialog")

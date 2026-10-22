@@ -65,7 +65,7 @@ public class AppClientManagementService {
     public AgentClientRepository.AppClientView update(final String clientRecordId,
             final UpdateClientRequest request) {
         InternalUser actor = requireAdmin();
-        AgentClientRepository.AppClientView current = clients.lockAdminView(clientRecordId);
+        AgentClientRepository.AppClientView current = clients.lockForUpdate(clientRecordId);
         if (current == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
 
         ClientSettings settings = validateSettings(request == null ? null : request.displayName(),
@@ -95,7 +95,7 @@ public class AppClientManagementService {
     @Transactional
     public void disable(final String clientRecordId) {
         InternalUser actor = requireAdmin();
-        AgentClientRepository.AppClientView current = clients.lockAdminView(clientRecordId);
+        AgentClientRepository.AppClientView current = clients.lockForUpdate(clientRecordId);
         if (current == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
         if (current.enabled()) {
             clients.setEnabled(clientRecordId, false);
@@ -110,7 +110,7 @@ public class AppClientManagementService {
     @Transactional
     public void enable(final String clientRecordId) {
         InternalUser actor = requireAdmin();
-        AgentClientRepository.AppClientView current = clients.lockAdminView(clientRecordId);
+        AgentClientRepository.AppClientView current = clients.lockForUpdate(clientRecordId);
         if (current == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
         if (current.enabled()) return;
 
@@ -124,7 +124,7 @@ public class AppClientManagementService {
     @Transactional
     public RotatedClientSecret rotateSecret(final String clientRecordId) {
         InternalUser actor = requireAdmin();
-        AgentClientRepository.AppClientView current = clients.lockAdminView(clientRecordId);
+        AgentClientRepository.AppClientView current = clients.lockForUpdate(clientRecordId);
         if (current == null) throw new OntologyApiException(ApiErrorCode.RESOURCE_NOT_FOUND);
 
         String clientSecret = randomValue(32);

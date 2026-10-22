@@ -328,9 +328,14 @@ const AdminOAuthClientsPage: React.FC = () => {
     }
     setEditOutcomeUnknown(undefined);
     setEditingClient(current);
-    editForm.setFieldsValue(values);
+    // 不确定结果与旧值、提交值均不一致时，表单必须回填最新服务端事实。
+    editForm.setFieldsValue({
+      displayName: current.displayName,
+      redirectUri: current.redirectUri,
+      scopes: current.scopes,
+    });
     setEditError(
-      '重新读取发现配置与本次提交和原值均不相同。请核对当前配置后再编辑，系统没有自动重试。',
+      '重新读取发现配置与本次提交和原值均不相同。表单已更新为服务端当前配置，请核对后再编辑；系统没有自动重试。',
     );
   };
 

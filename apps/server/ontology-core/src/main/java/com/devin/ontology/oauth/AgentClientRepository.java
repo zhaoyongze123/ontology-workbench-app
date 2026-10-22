@@ -86,8 +86,8 @@ public class AgentClientRepository implements RegisteredClientRepository {
                 .stream().findFirst().orElse(null);
     }
 
-    /** 管理端写操作先锁定客户端行，保证配置与授权撤销在同一事务内按顺序完成。 */
-    public AppClientView lockAdminView(final String recordId) {
+    /** 写操作按客户端行串行化，避免授权创建跨过配置变更与撤销事务。 */
+    public AppClientView lockForUpdate(final String recordId) {
         return jdbc.query("SELECT id, client_id, display_name, redirect_uri, scopes, enabled, create_time "
                         + "FROM ontology.og_app_client WHERE id = ? FOR UPDATE",
                 (rs, rowNum) -> new AppClientView(rs.getString("id"), rs.getString("client_id"),
