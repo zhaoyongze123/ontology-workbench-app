@@ -8,22 +8,22 @@
 
   .panelHeader {
     padding: 16px;
-    border-bottom: 1px solid #e8e8e8;
-    background-color: #fafafa;
+    border-bottom: 1px solid var(--wb-border, #e5e5e5);
+    background-color: var(--wb-sidebar, #fafafa);
     flex-shrink: 0;
 
     span {
       font-size: 14px;
-      color: #262626;
+      color: var(--wb-foreground, #0a0a0a);
     }
 
     .collapseButton {
-      color: #8c8c8c;
+      color: var(--wb-muted-foreground, #737373);
       padding: 4px;
 
       &:hover {
         color: @primaryColor;
-        background-color: rgba(87, 12, 244, 0.1);
+        background-color: var(--wb-secondary, #f5f5f5);
       }
     }
   }
@@ -51,7 +51,7 @@
 
     .panelTitle {
       font-size: 13px;
-      color: #595959;
+      color: var(--wb-muted-foreground, #737373);
 
       &.ant-space {
         display: flex;
@@ -115,7 +115,7 @@
 
             .nodeText {
               font-size: 13px;
-              color: #262626;
+              color: var(--wb-foreground, #0a0a0a);
             }
           }
         }

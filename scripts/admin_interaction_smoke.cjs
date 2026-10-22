@@ -951,7 +951,13 @@ server = http.createServer((req, res) => {
     await page.getByLabel("开始时间（北京时间）").fill("2026-10-20T00:00");
     await page.getByLabel("结束时间（北京时间）").fill("2026-10-23T00:00");
     await page.getByRole("button", { name: /查\s*询/ }).click();
-    await page.getByRole("row").filter({ hasText: "停用账号" }).waitFor();
+    // 旧游标页也可能含有同名记录；等待筛选后的结果真正替换当前表格。
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll(
+          "#main-content .ant-table tbody > tr.ant-table-row"
+        ).length === 1
+    );
     assert.equal(
       await auditTable.locator("tbody > tr.ant-table-row").count(),
       1,
@@ -987,8 +993,7 @@ server = http.createServer((req, res) => {
     );
 
     await page.getByRole("menuitem", { name: "站内邀请" }).click();
-    const invitationList = page.getByText("示例项目", { exact: true });
-    await invitationList.waitFor();
+    await page.getByRole("heading", { name: "站内邀请" }).waitFor();
     await page.getByText("@former_admin 邀请你加入", { exact: true }).waitFor();
     assert.equal(
       (await page.locator("#main-content").innerText()).includes(

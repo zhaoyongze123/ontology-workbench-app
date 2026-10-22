@@ -19,6 +19,7 @@
   "dependencies": {
     "@ant-design/icons": "^5.0.1",
     "@ant-design/pro-components": "^2.4.4",
+    "@fontsource/inter": "^5.3.0",
     "@types/d3-force": "^3.0.10",
     "@umijs/max": "^4.4.11",
     "@xyflow/react": "^12.7.1",

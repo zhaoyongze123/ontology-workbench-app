@@ -2,19 +2,19 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 12px;
+  gap: var(--wb-action-gap, 8px);
   min-width: 0;
   margin-bottom: 16px;
   scroll-margin-top: 72px;
-  padding: 12px;
-  border: 1px solid var(--ant-color-border-secondary, #f0f0f0);
-  border-radius: 8px;
-  background: var(--ant-color-bg-container, #fff);
+  padding: var(--wb-card-padding, 16px);
+  border: 1px solid var(--wb-border, #e5e5e5);
+  border-radius: var(--wb-radius-card, 14px);
+  background: var(--wb-surface, #fff);
 }
 
 @media (max-width: 640px) {
   .filterBar {
     align-items: stretch;
-    padding: 10px;
+    padding: 12px;
   }
 }

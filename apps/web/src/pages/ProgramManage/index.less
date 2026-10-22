@@ -1,10 +1,11 @@
 .programManage {
-  padding: 24px;
-  background-color: #fff;
-  border-radius: 2px;
+  padding: 0;
+  min-width: 0;
+  background-color: var(--wb-surface, #fff);
+  border-radius: var(--wb-radius-card, 14px);
 
   .header {
-    min-width: 300px;
+    min-width: 0;
     margin-bottom: 16px;
     display: flex;
     justify-content: space-between;
@@ -32,5 +33,15 @@
   .greenBadge {
     background-color: #dbf7cd;
     color: #42aa0e;
+  }
+}
+
+@media (max-width: 640px) {
+  .programManage {
+    .header {
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
   }
 }

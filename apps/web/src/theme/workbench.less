@@ -1,0 +1,122 @@
+html,
+body,
+#root {
+  min-width: 0;
+  min-height: 100%;
+}
+
+html,
+body {
+  background: var(--wb-background, #fff);
+  color: var(--wb-foreground, #0a0a0a);
+  font-family: var(
+    --wb-font-sans,
+    'Inter',
+    ui-sans-serif,
+    system-ui,
+    sans-serif
+  );
+  font-size: 14px;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  background: var(--wb-background, #fff);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.ant-layout {
+  background: var(--wb-background, #fff);
+}
+
+.ant-layout-sider {
+  background: var(--wb-sidebar, #fafafa);
+}
+
+.ant-menu-light,
+.ant-menu-light > .ant-menu {
+  background: transparent;
+}
+
+.ant-menu-light .ant-menu-item-selected {
+  color: var(--wb-sidebar-foreground, #0a0a0a);
+  background: var(--wb-sidebar-accent, #e8e8e8);
+}
+
+.ant-menu-light .ant-menu-item-selected:hover {
+  color: var(--wb-sidebar-foreground, #0a0a0a);
+  background: var(--wb-sidebar-accent, #e8e8e8);
+}
+
+.ant-menu-light .ant-menu-item:hover:not(.ant-menu-item-selected) {
+  color: var(--wb-sidebar-foreground, #0a0a0a);
+  background: var(--wb-secondary, #f5f5f5);
+}
+
+.ant-layout-header {
+  background: var(--wb-surface, #fff);
+}
+
+.ant-btn:not(.ant-btn-circle):not(.ant-btn-round),
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-select-selector,
+.ant-picker,
+.ant-input-number,
+.ant-input-number-affix-wrapper {
+  border-radius: var(--wb-radius-control, 8px);
+}
+
+.ant-card,
+.ant-modal-content,
+.ant-drawer-content {
+  border-radius: var(--wb-radius-card, 14px);
+}
+
+.ant-modal .ant-modal-content {
+  padding: 16px;
+}
+
+.ant-modal .ant-modal-header {
+  margin-bottom: 16px;
+  padding: 0;
+}
+
+.ant-modal .ant-modal-body {
+  padding: 0;
+}
+
+.ant-modal .ant-modal-footer {
+  margin-top: 16px;
+  padding: 16px 0 0;
+}
+
+.ant-drawer .ant-drawer-body {
+  padding: 16px;
+}
+
+.ant-form-item {
+  margin-bottom: var(--wb-form-gap, 16px);
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th {
+  background: var(--wb-secondary, #f5f5f5);
+  color: var(--wb-foreground, #0a0a0a);
+  font-weight: 600;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  border-bottom-color: var(--wb-border, #e5e5e5);
+}
