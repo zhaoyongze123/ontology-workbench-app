@@ -62,7 +62,8 @@ class DeploymentContracts(unittest.TestCase):
         self.assertIn("shared_preload_libraries=age", db_dockerfile)
         self.assertIn("FROM flyway/flyway:9.22.3 AS flyway", api_dockerfile)
         self.assertIn("COPY --from=flyway /flyway /opt/flyway", api_dockerfile)
-        self.assertIn("postgresql-client", api_dockerfile)
+        self.assertIn("FROM eclipse-temurin:17-jre-noble", api_dockerfile)
+        self.assertIn("postgresql-client-16", api_dockerfile)
         self.assertFalse((ROOT / "deploy/Dockerfile.migrate").exists())
 
     def test_bootstrap_input_is_mounted_as_private_directory(self):
