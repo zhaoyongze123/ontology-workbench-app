@@ -16,10 +16,12 @@ import org.springframework.stereotype.Component;
 public class BootstrapCommand implements ApplicationRunner {
     private final BootstrapService bootstrapService;
     private final String inputFile;
+    private final String mode;
 
     public BootstrapCommand(
             final BootstrapService bootstrapService,
             @Value("${ontology.bootstrap.file:}") final String inputFile,
+            @Value("${ontology.bootstrap.mode:local-test}") final String mode,
             final Environment environment) {
         if (!environment.acceptsProfiles(org.springframework.core.env.Profiles.of("bootstrap"))) {
             throw new IllegalStateException("bootstrap 命令要求 bootstrap profile");
@@ -29,6 +31,7 @@ public class BootstrapCommand implements ApplicationRunner {
         }
         this.bootstrapService = bootstrapService;
         this.inputFile = inputFile;
+        this.mode = mode;
     }
 
     @Override
@@ -36,7 +39,11 @@ public class BootstrapCommand implements ApplicationRunner {
         if (inputFile.isBlank()) {
             throw new IllegalStateException("必须通过 ontology.bootstrap.file 显式指定输入文件");
         }
-        BootstrapService.BootstrapResult result = bootstrapService.apply(Path.of(inputFile));
+        BootstrapService.BootstrapResult result = switch (mode) {
+            case "local-test" -> bootstrapService.apply(Path.of(inputFile));
+            case "production" -> bootstrapService.applyProduction(Path.of(inputFile));
+            default -> throw new IllegalStateException("ontology.bootstrap.mode 仅支持 local-test 或 production");
+        };
         System.out.printf("Bootstrap 完成状态：%s，用户数：%d，项目数：%d%n",
                 result.applied() ? "已应用" : "已验证为重复输入", result.userCount(), result.projectCount());
     }

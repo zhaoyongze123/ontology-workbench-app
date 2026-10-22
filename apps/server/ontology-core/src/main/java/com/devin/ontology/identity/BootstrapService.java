@@ -29,6 +29,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Profile("bootstrap")
 public class BootstrapService {
     private static final String SEED_KEY = "multiuser-bootstrap-v1";
+    private static final String PRODUCTION_SEED_KEY = "production-admin-v1";
     private static final long BOOTSTRAP_LOCK_KEY = 7_194_563_108_322_024L;
     private static final long MAX_INPUT_BYTES = 1_048_576L;
     private static final Set<PosixFilePermission> PRIVATE_DIR_PERMISSIONS = Set.of(
@@ -54,6 +55,26 @@ public class BootstrapService {
 
     /** 从本机私有 JSON 读取待执行输入；原文和密码不会写入日志或审计表。 */
     public BootstrapResult apply(final Path inputFile) {
+        return applyLocal(inputFile);
+    }
+
+    /** 生产模式仅初始化一个系统管理员；与本地测试种子使用不同契约和 ledger key。 */
+    public BootstrapResult applyProduction(final Path inputFile) {
+        final byte[] bytes;
+        final ProductionBootstrapInput input;
+        try {
+            validatePrivateInputFile(inputFile);
+            bytes = Files.readAllBytes(inputFile);
+            input = objectMapper.readValue(bytes, ProductionBootstrapInput.class);
+        } catch (IOException ignored) {
+            throw new IllegalStateException("无法读取或解析 production bootstrap 输入文件");
+        }
+        validateProduction(input);
+        String digest = sha256(bytes);
+        return transactionTemplate.execute(status -> applyProductionInTransaction(input, digest));
+    }
+
+    private BootstrapResult applyLocal(final Path inputFile) {
         final byte[] bytes;
         final BootstrapInput input;
         try {
@@ -67,6 +88,77 @@ public class BootstrapService {
         validate(input);
         final String digest = sha256(bytes);
         return transactionTemplate.execute(status -> applyInTransaction(input, digest));
+    }
+
+    private BootstrapResult applyProductionInTransaction(
+            final ProductionBootstrapInput input, final String digest) {
+        jdbcTemplate.execute("SELECT pg_advisory_xact_lock(" + BOOTSTRAP_LOCK_KEY + ")");
+        List<String> completed = jdbcTemplate.query(
+                "SELECT input_digest FROM ontology.og_bootstrap_run WHERE seed_key = ?",
+                (rs, rowNum) -> rs.getString(1), PRODUCTION_SEED_KEY);
+        if (!completed.isEmpty()) {
+            if (completed.size() != 1 || !MessageDigest.isEqual(
+                    completed.get(0).getBytes(StandardCharsets.US_ASCII), digest.getBytes(StandardCharsets.US_ASCII))) {
+                throw new IllegalStateException("production bootstrap 已执行且输入不一致；拒绝修改现有身份");
+            }
+            Integer userCount = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(username) FROM ontology.og_user WHERE username = ?",
+                    Integer.class, input.username());
+            if (userCount == null || userCount != 1) {
+                throw new IllegalStateException("已初始化管理员身份不匹配，需人工复核");
+            }
+            return new BootstrapResult(false, 1, 0);
+        }
+
+        // 必须是全新身份/项目库，避免把本地种子库或既有租户库提升为生产首管环境。
+        Integer existingUsers = jdbcTemplate.queryForObject(
+                "SELECT COUNT(username) FROM ontology.og_user", Integer.class);
+        Integer existingProjects = jdbcTemplate.queryForObject(
+                "SELECT COUNT(id) FROM ontology.og_organization", Integer.class);
+        Integer localSeed = jdbcTemplate.queryForObject(
+                "SELECT COUNT(seed_key) FROM ontology.og_bootstrap_run WHERE seed_key = ?",
+                Integer.class, SEED_KEY);
+        if ((existingUsers != null && existingUsers > 0)
+                || (existingProjects != null && existingProjects > 0)
+                || (localSeed != null && localSeed > 0)) {
+            throw new IllegalStateException("生产首管初始化仅允许空身份和项目环境；现有数据需人工复核");
+        }
+
+        String id = java.util.UUID.randomUUID().toString();
+        jdbcTemplate.update(
+                "INSERT INTO ontology.og_user(id, username, display_name, system_admin, enabled, auth_version) "
+                        + "VALUES (?, ?, ?, TRUE, TRUE, 0)",
+                id, input.username(), input.displayName());
+        jdbcTemplate.update(
+                "INSERT INTO ontology.og_password_credential(user_id, password_hash) VALUES (?, ?)",
+                id, passwordEncoder.encode(input.password()));
+        jdbcTemplate.update(
+                "INSERT INTO ontology.og_audit_event(event_type, actor_user_id, details_json) "
+                        + "VALUES (?, ?, ?::jsonb)",
+                "IDENTITY_BOOTSTRAP_APPLIED", id, "{\"seedKey\":\"" + PRODUCTION_SEED_KEY + "\",\"users\":1,\"projects\":0}");
+        jdbcTemplate.update(
+                "INSERT INTO ontology.og_bootstrap_run(seed_key, input_digest, completed_at, details_json) "
+                        + "VALUES (?, ?, ?, ?::jsonb)",
+                PRODUCTION_SEED_KEY, digest, Timestamp.from(Instant.now()), "{\"mode\":\"production\"}");
+        return new BootstrapResult(true, 1, 0);
+    }
+
+    static void validateProduction(final ProductionBootstrapInput input) {
+        if (input == null || input.schemaVersion() != 1 || input.username() == null
+                || !input.username().strip().matches("[A-Za-z0-9][A-Za-z0-9._@+-]{1,119}")
+                || input.displayName() == null || input.displayName().isBlank()
+                || input.displayName().strip().length() > 200 || input.password() == null) {
+            throw new IllegalArgumentException("production bootstrap 输入缺少必填字段或版本无效");
+        }
+        if (input.username().equalsIgnoreCase(input.password())
+                || ("admin".equalsIgnoreCase(input.username()) && "admin".equals(input.password()))) {
+            throw new IllegalArgumentException("管理员密码不能与用户名相同或使用默认口令");
+        }
+        // 对齐本地密码激活/重置流程的基本长度边界。
+        if (input.password().length() < 12 || input.password().length() > 1024
+                || input.password().chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException("管理员密码长度必须为 12 到 1024 个字符");
+        }
     }
 
     private BootstrapResult applyInTransaction(final BootstrapInput input, final String digest) {
@@ -306,10 +398,12 @@ public class BootstrapService {
         }
         Path parent = inputFile.toAbsolutePath().normalize().getParent();
         try {
+            Set<PosixFilePermission> filePermissions = Files.getPosixFilePermissions(inputFile, LinkOption.NOFOLLOW_LINKS);
+            Set<PosixFilePermission> readOnlyFilePermissions = Set.of(PosixFilePermission.OWNER_READ);
             if (parent == null || !Files.getPosixFilePermissions(parent).equals(PRIVATE_DIR_PERMISSIONS)
-                    || !Files.getPosixFilePermissions(inputFile, LinkOption.NOFOLLOW_LINKS)
-                            .equals(PRIVATE_FILE_PERMISSIONS)) {
-                throw new IllegalArgumentException("bootstrap 输入目录/文件权限必须分别为 0700/0600");
+                    || !(filePermissions.equals(PRIVATE_FILE_PERMISSIONS)
+                            || filePermissions.equals(readOnlyFilePermissions))) {
+                throw new IllegalArgumentException("bootstrap 输入目录须为 0700，文件须为 0600 或仅属主可读");
             }
         } catch (UnsupportedOperationException exception) {
             throw new IllegalArgumentException("bootstrap 输入要求支持 POSIX 权限的本机文件系统", exception);
@@ -326,6 +420,7 @@ public class BootstrapService {
     }
 
     public record BootstrapResult(boolean applied, int userCount, int projectCount) { }
+    public record ProductionBootstrapInput(int schemaVersion, String username, String displayName, String password) { }
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record BootstrapInput(
             int schemaVersion, String environment, String initialPasswordPolicy,
